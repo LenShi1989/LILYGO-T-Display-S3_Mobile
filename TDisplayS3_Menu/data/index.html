@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T-Display-S3 OTA 更新</title>
+<style>
+  :root {
+    --bg: #070b14;
+    --card: #111a2e;
+    --card2: #16223b;
+    --line: #26334d;
+    --text: #eef4ff;
+    --muted: #94a3b8;
+    --accent: #2dd4bf;
+    --accent2: #38bdf8;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --danger: #f87171;
+  }
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; }
+  body {
+    margin: 0;
+    padding: 28px 16px 48px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC",
+                 "Microsoft JhengHei", "PingFang TC", sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(1100px 520px at 78% -12%, #12324a 0%, transparent 62%),
+      radial-gradient(700px 420px at -10% 20%, #0d2b28 0%, transparent 60%),
+      var(--bg);
+  }
+  .wrap { width: 100%; max-width: 780px; margin: 0 auto; }
+  header {
+    display: flex; align-items: center; gap: 14px;
+    margin-bottom: 22px;
+  }
+  .logo {
+    width: 46px; height: 46px; flex: 0 0 auto;
+    display: grid; place-items: center;
+    border-radius: 13px;
+    background: linear-gradient(145deg, #1c3350, #0f1b2e);
+    border: 1px solid var(--line);
+    color: var(--accent);
+  }
+  .logo svg { width: 25px; height: 25px; }
+  h1 { margin: 0; font-size: 20px; letter-spacing: .4px; }
+  .sub { margin: 3px 0 0; font-size: 12.5px; color: var(--muted); }
+  .badge {
+    margin-left: auto;
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 6px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 600;
+    border: 1px solid var(--line);
+    background: var(--card2); color: var(--muted);
+    white-space: nowrap;
+  }
+  .badge::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--muted);
+  }
+  .badge.online { color: var(--ok); border-color: #1e4d3a; background: #0d2419; }
+  .badge.online::before { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .badge.offline { color: var(--danger); border-color: #4a2020; background: #240f0f; }
+  .badge.offline::before { background: var(--danger); }
+
+  .grid {
+    display: grid; gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    margin-bottom: 18px;
+  }
+  .stat {
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: linear-gradient(180deg, var(--card2), var(--card));
+  }
+  .stat .k { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 5px; }
+  .stat .v {
+    font-size: 14px; font-weight: 600;
+    word-break: break-all; font-variant-numeric: tabular-nums;
+  }
+
+  .card {
+    padding: 20px;
+    margin-bottom: 16px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(22,34,59,.9), rgba(17,26,46,.9));
+    box-shadow: 0 18px 40px -30px #000;
+  }
+  .card h2 {
+    margin: 0 0 14px;
+    font-size: 14px; letter-spacing: .5px;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+
+  .drop {
+    display: grid; place-items: center; gap: 8px;
+    padding: 30px 18px;
+    border: 1.5px dashed #33445f;
+    border-radius: 13px;
+    background: rgba(7, 11, 20, .45);
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .18s, background .18s, transform .18s;
+  }
+  .drop:hover, .drop.over {
+    border-color: var(--accent);
+    background: rgba(45, 212, 191, .07);
+  }
+  .drop.over { transform: scale(1.005); }
+  .drop svg { width: 34px; height: 34px; color: var(--muted); }
+  .drop.over svg, .drop:hover svg { color: var(--accent); }
+  .drop p { margin: 0; font-size: 13.5px; color: var(--muted); }
+  .drop .link { color: var(--accent2); font-weight: 600; }
+  .drop .hint { font-size: 11.5px; color: #64748b; }
+
+  .file {
+    display: flex; align-items: center; gap: 12px;
+    margin-top: 14px; padding: 12px 14px;
+    border: 1px solid var(--line); border-radius: 12px;
+    background: var(--card2);
+  }
+  .file-ico {
+    width: 34px; height: 34px; flex: 0 0 auto; border-radius: 9px;
+    display: grid; place-items: center;
+    background: rgba(45, 212, 191, .12); color: var(--accent);
+    font-size: 10px; font-weight: 700;
+  }
+  .file-meta { min-width: 0; }
+  .file-name {
+    font-size: 13.5px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .file-size { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  .file .ghost {
+    margin-left: auto; flex: 0 0 auto;
+    border: 1px solid var(--line); background: transparent;
+    color: var(--muted); border-radius: 8px;
+    padding: 7px 11px; font-size: 12px; cursor: pointer;
+  }
+  .file .ghost:hover { color: var(--danger); border-color: #4a2020; }
+
+  .bar-wrap { margin-top: 16px; }
+  .bar {
+    height: 12px; border-radius: 999px; overflow: hidden;
+    background: #0a1220; border: 1px solid var(--line);
+  }
+  .bar .fill {
+    height: 100%; width: 0%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    transition: width .18s ease;
+  }
+  .bar-meta {
+    display: flex; justify-content: space-between;
+    margin-top: 7px; font-size: 12px; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .btn {
+    display: block; width: 100%;
+    margin-top: 16px; padding: 14px;
+    border: 0; border-radius: 12px;
+    font-size: 15px; font-weight: 700; letter-spacing: .5px;
+    color: #04121a; cursor: pointer;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    box-shadow: 0 10px 26px -12px rgba(45, 212, 191, .75);
+    transition: filter .18s, transform .12s, opacity .18s;
+  }
+  .btn:hover:not(:disabled) { filter: brightness(1.07); }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:disabled { opacity: .38; cursor: not-allowed; box-shadow: none; }
+
+  .msg { margin: 14px 0 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
+  .msg.ok { color: var(--ok); }
+  .msg.err { color: var(--danger); }
+  .warn {
+    margin: 14px 0 0; padding: 11px 13px;
+    border-radius: 10px; font-size: 12px; line-height: 1.65;
+    color: #e7c987;
+    background: rgba(251, 191, 36, .08);
+    border: 1px solid rgba(251, 191, 36, .25);
+  }
+
+  .tips ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.85; }
+  .tips strong { color: var(--text); }
+  code {
+    padding: 2px 6px; border-radius: 5px;
+    background: #0a1220; border: 1px solid var(--line);
+    color: var(--accent); font-size: 12px;
+  }
+  .hidden { display: none !important; }
+  footer { margin-top: 18px; text-align: center; font-size: 11.5px; color: #5b6b83; }
+
+  @media (max-width: 520px) {
+    body { padding-top: 20px; }
+    h1 { font-size: 18px; }
+    .badge { padding: 5px 9px; }
+    .grid { grid-template-columns: repeat(2, 1fr); }
+    .card { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="6" width="18" height="12" rx="2"></rect>
+        <path d="M7 10h4M7 14h7M17 10v4"></path>
+      </svg>
+    </div>
+    <div>
+      <h1>OTA 韌體更新</h1>
+      <p class="sub">LILYGO T-Display-S3 · ESP32-S3 · AP + WiFi 共存</p>
+    </div>
+    <span id="badge" class="badge">連線中</span>
+  </header>
+
+  <section class="grid">
+    <div class="stat"><span class="k">韌體版本</span><span class="v" id="st-version">--</span></div>
+    <div class="stat"><span class="k">AP 位址</span><span class="v" id="st-apip">--</span></div>
+    <div class="stat"><span class="k">WiFi 用戶端</span><span class="v" id="st-sta">--</span></div>
+    <div class="stat"><span class="k">SPIFFS</span><span class="v" id="st-fs">--</span></div>
+    <div class="stat"><span class="k">可用記憶體</span><span class="v" id="st-heap">--</span></div>
+    <div class="stat"><span class="k">運作時間</span><span class="v" id="st-uptime">--</span></div>
+  </section>
+
+  <section class="card">
+    <h2>上傳韌體</h2>
+    <div id="drop" class="drop" role="button" tabindex="0"
+         aria-label="選擇或拖放韌體檔">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 16V4"></path>
+        <path d="m7 9 5-5 5 5"></path>
+        <path d="M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"></path>
+      </svg>
+      <p>拖放 <strong>.bin</strong> 韌體到此處，或 <span class="link">選擇檔案</span></p>
+      <p class="hint">上限取決於 OTA 分割區空間（目前約 3 MB）</p>
+      <input id="file" type="file" accept=".bin,application/octet-stream" hidden>
+    </div>
+
+    <div id="fileBox" class="file hidden">
+      <div class="file-ico">BIN</div>
+      <div class="file-meta">
+        <div class="file-name" id="fileName">--</div>
+        <div class="file-size" id="fileSize">--</div>
+      </div>
+      <button id="clear" class="ghost" type="button">移除</button>
+    </div>
+
+    <div id="barWrap" class="bar-wrap hidden">
+      <div class="bar"><div id="bar" class="fill"></div></div>
+      <div class="bar-meta"><span id="pct">0%</span><span id="speed"></span></div>
+    </div>
+
+    <button id="upload" class="btn" type="button" disabled>開始更新</button>
+    <p id="msg" class="msg">請選擇編譯產生的韌體檔（.bin）。</p>
+
+    <p class="warn">更新期間請保持供電，勿關閉頁面或離開 AP 網路。寫入完成後裝置會自動重新啟動。</p>
+  </section>
+
+  <section class="card tips">
+    <h2>使用方式</h2>
+    <ol>
+      <li>Arduino IDE：<strong>草稿碼 → 匯出已編譯的二進位檔</strong>，取得 <code>.bin</code>。</li>
+      <li>連線 AP <code>TTGO-OTA-Setup</code>（免密碼），開啟 <code>http://192.168.4.1</code>。</li>
+      <li>選擇檔案後按「開始更新」，等待進度完成。</li>
+      <li>裝置自動重啟後，本頁會重新連線並顯示新版本。</li>
+    </ol>
+  </section>
+
+  <footer>T-Display-S3 Control Panel · OTA Web Updater</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var $ = function (id) { return document.getElementById(id); };
+  var file = null;
+  var uploading = false;
+  var rebootTimer = null;
+
+  function fmtBytes(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + " B";
+    var units = ["KB", "MB", "GB"];
+    var i = -1;
+    do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
+    return (n >= 10 ? n.toFixed(0) : n.toFixed(1)) + " " + units[i];
+  }
+
+  function fmtUptime(sec) {
+    sec = Number(sec) || 0;
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    var s = sec % 60;
+    if (h > 0) return h + " 時 " + m + " 分";
+    if (m > 0) return m + " 分 " + s + " 秒";
+    return s + " 秒";
+  }
+
+  function setBadge(state, text) {
+    var b = $("badge");
+    b.className = "badge" + (state ? " " + state : "");
+    b.textContent = text;
+  }
+
+  function setMsg(text, kind) {
+    var m = $("msg");
+    m.textContent = text;
+    m.className = "msg" + (kind ? " " + kind : "");
+  }
+
+  function setProgress(pct) {
+    pct = Math.max(0, Math.min(100, Math.round(pct)));
+    $("bar").style.width = pct + "%";
+    $("pct").textContent = pct + "%";
+  }
+
+  function refresh() {
+    return fetch("/api/status", { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("status " + r.status);
+        return r.json();
+      })
+      .then(function (s) {
+        setBadge("online", "已連線");
+        $("st-version").textContent = "v" + s.version;
+        $("st-apip").textContent = s.apIp || "--";
+        $("st-sta").textContent = s.staConnected
+          ? (s.staSsid || "已連線")
+          : "未連線";
+        $("st-fs").textContent = s.fsReady
+          ? fmtBytes(s.fsUsed) + " / " + fmtBytes(s.fsTotal)
+          : "未掛載";
+        $("st-heap").textContent = fmtBytes(s.heapFree);
+        $("st-uptime").textContent = fmtUptime(s.uptime);
+        return s;
+      })
+      .catch(function () {
+        setBadge("offline", "離線");
+        throw new Error("offline");
+      });
+  }
+
+  function pickFile(f) {
+    if (!f || uploading) return;
+    if (!/\.bin$/i.test(f.name)) {
+      setMsg("請選擇 .bin 韌體檔。", "err");
+      return;
+    }
+    if (f.size < 4096) {
+      setMsg("檔案太小，可能不是有效的韌體。", "err");
+      return;
+    }
+    file = f;
+    $("fileName").textContent = f.name;
+    $("fileSize").textContent = fmtBytes(f.size);
+    $("fileBox").classList.remove("hidden");
+    $("clear").disabled = false;
+    $("upload").disabled = false;
+    setProgress(0);
+    $("speed").textContent = "";
+    $("barWrap").classList.remove("hidden");
+    setMsg("準備就緒，按「開始更新」寫入韌體。", "");
+  }
+
+  function clearFile() {
+    if (uploading) return;
+    file = null;
+    $("file").value = "";
+    $("fileBox").classList.add("hidden");
+    $("barWrap").classList.add("hidden");
+    $("upload").disabled = true;
+    $("speed").textContent = "";
+    setProgress(0);
+    setMsg("請選擇編譯產生的韌體檔（.bin）。", "");
+  }
+
+  function waitForReboot() {
+    var tries = 0;
+    if (rebootTimer) clearInterval(rebootTimer);
+    rebootTimer = setInterval(function () {
+      tries++;
+      refresh()
+        .then(function (s) {
+          clearInterval(rebootTimer);
+          rebootTimer = null;
+          uploading = false;
+          file = null;
+          $("file").value = "";
+          $("fileBox").classList.add("hidden");
+          $("upload").disabled = true;
+          $("speed").textContent = "";
+          setBadge("online", "已連線");
+          setMsg("裝置已重新上線，目前版本 v" + s.version + "。", "ok");
+        })
+        .catch(function () {
+          setBadge("offline", "重新啟動中");
+          if (tries >= 20) {
+            clearInterval(rebootTimer);
+            rebootTimer = null;
+            uploading = false;
+            setMsg("尚未偵測到裝置，請確認已重新連上 AP 後重新整理本頁。", "err");
+          }
+        });
+    }, 2500);
+  }
+
+  function startUpload() {
+    if (!file || uploading) return;
+    uploading = true;
+    setBadge("", "更新中");
+    $("upload").disabled = true;
+    $("clear").disabled = true;
+    setMsg("正在傳送韌體，請勿關閉頁面…", "");
+    setProgress(0);
+
+    var fd = new FormData();
+    fd.append("firmware", file, file.name);
+
+    var xhr = new XMLHttpRequest();
+    var started = Date.now();
+
+    xhr.open("POST", "/update", true);
+    xhr.setRequestHeader("X-File-Size", String(file.size));
+
+    xhr.upload.onprogress = function (e) {
+      if (!e.lengthComputable) return;
+      setProgress(e.loaded / e.total * 100);
+      var sec = (Date.now() - started) / 1000;
+      if (sec > 0.4) $("speed").textContent = fmtBytes(e.loaded / sec) + "/s";
+    };
+
+    xhr.onload = function () {
+      var res = null;
+      try { res = JSON.parse(xhr.responseText); } catch (err) { /* ignore */ }
+      $("speed").textContent = "";
+      if (xhr.status === 200 && res && res.ok) {
+        setProgress(100);
+        setMsg("更新成功，裝置正在重新啟動…", "ok");
+        setBadge("", "重新啟動中");
+        waitForReboot();
+      } else {
+        uploading = false;
+        $("upload").disabled = false;
+        $("clear").disabled = false;
+        setMsg((res && res.message) || ("更新失敗（HTTP " + xhr.status + "）"), "err");
+        setBadge("online", "已連線");
+        refresh().catch(function () {});
+      }
+    };
+
+    xhr.onerror = function () {
+      uploading = false;
+      $("upload").disabled = false;
+      $("clear").disabled = false;
+      $("speed").textContent = "";
+      setMsg("連線中斷，請確認仍連線 AP TTGO-OTA-Setup 後重試。", "err");
+      setBadge("offline", "離線");
+    };
+
+    xhr.send(fd);
+  }
+
+  $("drop").addEventListener("click", function () {
+    if (!uploading) $("file").click();
+  });
+  $("drop").addEventListener("keydown", function (e) {
+    if ((e.key === "Enter" || e.key === " ") && !uploading) {
+      e.preventDefault();
+      $("file").click();
+    }
+  });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    $("drop").addEventListener(ev, function (e) {
+      e.preventDefault();
+      if (!uploading) $("drop").classList.add("over");
+    });
+  });
+  ["dragleave", "dragend", "drop"].forEach(function (ev) {
+    $("drop").addEventListener(ev, function (e) {
+      e.preventDefault();
+      $("drop").classList.remove("over");
+    });
+  });
+  $("drop").addEventListener("drop", function (e) {
+    if (e.dataTransfer && e.dataTransfer.files.length) {
+      pickFile(e.dataTransfer.files[0]);
+    }
+  });
+  $("file").addEventListener("change", function (e) {
+    pickFile(e.target.files[0]);
+  });
+  $("clear").addEventListener("click", clearFile);
+  $("upload").addEventListener("click", startUpload);
+
+  refresh().catch(function () {});
+  setInterval(function () {
+    if (!uploading) refresh().catch(function () {});
+  }, 5000);
+})();
+</script>
+</body>
+</html>

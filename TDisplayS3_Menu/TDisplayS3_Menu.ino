@@ -1,6 +1,6 @@
 /*
  * LILYGO T-Display-S3 控制面板
- * 軟體版本：1.0.2
+ * 軟體版本：1.1.0
  * Arduino IDE：2.3.10
  * Arduino CLI：1.5.1
  * ESP32 Arduino Core：3.3.12
@@ -18,6 +18,9 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
+#include <SPIFFS.h>
+#include <WebServer.h>
+#include <Update.h>
 #include <ArduinoJson.h>
 #include <time.h>
 #include <ctype.h>
@@ -94,6 +97,10 @@ static constexpr int ROW_H = 23;
 static constexpr int MAX_SCAN = 24;
 static constexpr int MAX_POINTS = 120;
 
+static constexpr const char* FW_VERSION = "1.1.0";
+static constexpr const char* AP_SSID = "TTGO-OTA-Setup";
+static constexpr uint32_t OTA_REBOOT_DELAY_MS = 1200;
+
 static constexpr uint8_t PIN_BTN_NEXT = 0;
 static constexpr uint8_t PIN_BTN_OK = 14;
 static constexpr uint8_t PIN_BAT = 4;
@@ -141,7 +148,8 @@ enum Screen : uint8_t {
   SCR_WEATHER,
   SCR_CLOCK,
   SCR_STOCK_QUOTE,
-  SCR_STOCK_CHART
+  SCR_STOCK_CHART,
+  SCR_OTA
 };
 
 enum Event : uint8_t {
@@ -224,7 +232,8 @@ static const char* const MAIN_ITEMS[] = {
   "WiFi設定",
   "天氣",
   "時間",
-  "股票"
+  "股票",
+  "OTA更新"
 };
 
 static const char* const SYS_ITEMS[] = {
@@ -275,6 +284,15 @@ bool iconBlink = false;
 bool wifiTrying = false;
 uint32_t wifiTryStart = 0;
 bool ntpStarted = false;
+
+bool spiffsReady = false;
+bool otaRunning = false;
+bool otaSuccess = false;
+uint8_t otaProgress = 0;
+size_t otaTotalSize = 0;
+String otaStatus = "待機";
+
+WebServer webServer(80);
 
 KbMode kbMode = KB_SSID;
 String kbTitle;
@@ -436,7 +454,7 @@ void saveSymbol(const String& symbol) {
 }
 
 void clearWifiSettings() {
-  WiFi.disconnect(true, true);
+  WiFi.disconnect(false, true);
   prefs.begin("tds3", false);
   prefs.remove("ssid");
   prefs.remove("pass");
@@ -444,7 +462,198 @@ void clearWifiSettings() {
   cfgSsid = "";
   cfgPass = "";
   wifiTrying = false;
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(WIFI_AP_STA);
+}
+
+static const char OTA_FS_MISSING[] PROGMEM = R"HTML(<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SPIFFS 未就緒</title>
+<style>body{margin:0;padding:32px;background:#070b14;color:#eef4ff;font-family:system-ui,"Microsoft JhengHei",sans-serif;line-height:1.7}
+code{background:#16223b;padding:2px 6px;border-radius:4px;color:#2dd4bf}h1{font-size:20px}</style></head>
+<body><h1>SPIFFS 未就緒</h1>
+<p>找不到 <code>/index.html</code>，請先將 <code>TDisplayS3_Menu/data</code> 打包並寫入 SPIFFS 分割區。</p>
+<p>寫入後重新整理本頁即可使用 OTA 更新功能。</p>
+</body></html>)HTML";
+
+bool initFileSystem() {
+  spiffsReady = SPIFFS.begin(true);
+  if (spiffsReady) {
+    Serial.printf("[SPIFFS] mounted, %u / %u bytes used\n",
+                  (unsigned)SPIFFS.usedBytes(), (unsigned)SPIFFS.totalBytes());
+  } else {
+    Serial.println("[SPIFFS] mount failed");
+  }
+  return spiffsReady;
+}
+
+void startAccessPoint() {
+  WiFi.mode(WIFI_AP_STA);
+  IPAddress apIp(192, 168, 4, 1);
+  WiFi.softAPConfig(apIp, apIp, IPAddress(255, 255, 255, 0));
+  WiFi.softAP(AP_SSID, NULL, 6, 0, 4);
+  Serial.printf("[AP] %s open, IP %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+}
+
+String jsonQuote(const String& value) {
+  String out;
+  out.reserve(value.length() + 2);
+  out += '"';
+  for (size_t i = 0; i < value.length(); i++) {
+    char c = value[i];
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += c;
+    } else if ((uint8_t)c < 0x20) {
+      char buf[7];
+      snprintf(buf, sizeof(buf), "\\u%04x", (uint8_t)c);
+      out += buf;
+    } else {
+      out += c;
+    }
+  }
+  out += '"';
+  return out;
+}
+
+void handleRoot() {
+  webServer.sendHeader("Cache-Control", "no-store");
+  File file = SPIFFS.open("/index.html", "r");
+  if (!file) {
+    webServer.send(500, "text/html; charset=utf-8", String(OTA_FS_MISSING));
+    return;
+  }
+  webServer.streamFile(file, "text/html; charset=utf-8");
+  file.close();
+}
+
+void handleStatus() {
+  bool staOnline = (WiFi.status() == WL_CONNECTED);
+  String json;
+  json.reserve(512);
+  json += '{';
+  json += "\"version\":" + jsonQuote(FW_VERSION) + ',';
+  json += "\"apSsid\":" + jsonQuote(AP_SSID) + ',';
+  json += "\"apIp\":" + jsonQuote(WiFi.softAPIP().toString()) + ',';
+  json += "\"apClients\":" + String(WiFi.softAPgetStationNum()) + ',';
+  json += "\"staConnected\":" + String(staOnline ? "true" : "false") + ',';
+  json += "\"staSsid\":" + jsonQuote(staOnline ? WiFi.SSID() : String("")) + ',';
+  json += "\"staIp\":" + jsonQuote(staOnline ? WiFi.localIP().toString() : String("--")) + ',';
+  json += "\"heapFree\":" + String(ESP.getFreeHeap()) + ',';
+  json += "\"uptime\":" + String(millis() / 1000UL) + ',';
+  json += "\"fsReady\":" + String(spiffsReady ? "true" : "false") + ',';
+  json += "\"fsTotal\":" + String(spiffsReady ? (unsigned)SPIFFS.totalBytes() : 0) + ',';
+  json += "\"fsUsed\":" + String(spiffsReady ? (unsigned)SPIFFS.usedBytes() : 0) + ',';
+  json += "\"otaRunning\":" + String(otaRunning ? "true" : "false");
+  json += '}';
+  webServer.sendHeader("Cache-Control", "no-store");
+  webServer.send(200, "application/json; charset=utf-8", json);
+}
+
+void handleNotFound() {
+  webServer.send(404, "text/plain; charset=utf-8", "Not Found");
+}
+
+void drawOtaIfVisible() {
+  if (screen == SCR_OTA) drawOtaScreen();
+}
+
+void handleUpdateUpload() {
+  HTTPUpload& up = webServer.upload();
+
+  if (up.status == UPLOAD_FILE_START) {
+    otaTotalSize = 0;
+    String sizeHeader = webServer.header("X-File-Size");
+    if (sizeHeader.length()) otaTotalSize = (size_t)strtoul(sizeHeader.c_str(), nullptr, 10);
+
+    size_t maxSize = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+    size_t beginSize = (otaTotalSize > 0 && otaTotalSize <= maxSize) ? otaTotalSize : maxSize;
+
+    otaRunning = true;
+    otaSuccess = false;
+    otaProgress = 0;
+    otaStatus = "接收韌體";
+    drawOtaIfVisible();
+    Serial.printf("[OTA] start %s, %u bytes\n", up.filename.c_str(), (unsigned)beginSize);
+
+    if (!Update.begin(beginSize)) {
+      Update.printError(Serial);
+      otaRunning = false;
+      otaStatus = String("無法開始: ") + Update.errorString();
+      drawOtaIfVisible();
+    }
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (Update.isRunning() && !Update.hasError()) {
+      size_t written = Update.write(up.buf, up.currentSize);
+      if (written != up.currentSize) Update.printError(Serial);
+    }
+    if (otaTotalSize > 0) {
+      int pct = (int)((uint64_t)Update.progress() * 100 / otaTotalSize);
+      if (pct > 99) pct = 99;
+      if (pct / 2 != otaProgress / 2) {
+        otaProgress = (uint8_t)pct;
+        otaStatus = "接收中 " + String(pct) + "%";
+        drawOtaIfVisible();
+      }
+    }
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (Update.isRunning() && !Update.hasError() && Update.end(true)) {
+      otaSuccess = true;
+      otaProgress = 100;
+      otaStatus = "寫入完成";
+    } else {
+      Update.printError(Serial);
+      otaStatus = Update.hasError() ? String("寫入失敗: ") + Update.errorString() : "寫入失敗";
+    }
+    otaRunning = false;
+    drawOtaIfVisible();
+  } else if (up.status == UPLOAD_FILE_ABORTED) {
+    if (Update.isRunning()) Update.abort();
+    otaRunning = false;
+    otaSuccess = false;
+    otaStatus = "已取消";
+    drawOtaIfVisible();
+  }
+}
+
+void handleUpdateDone() {
+  bool ok = otaSuccess && !Update.hasError();
+  if (ok) {
+    otaProgress = 100;
+    otaStatus = "更新完成";
+  } else {
+    String reason = Update.hasError() ? String(Update.errorString()) : String("未收到韌體資料");
+    otaStatus = "更新失敗: " + reason;
+  }
+  otaRunning = false;
+  otaSuccess = false;
+  drawOtaIfVisible();
+
+  webServer.sendHeader("Connection", "close");
+  webServer.sendHeader("Cache-Control", "no-store");
+  if (ok) {
+    webServer.send(200, "application/json; charset=utf-8",
+                   "{\"ok\":true,\"message\":\"更新完成，裝置重新啟動\"}");
+    Serial.println("[OTA] success, restarting");
+    delay(OTA_REBOOT_DELAY_MS);
+    ESP.restart();
+  } else {
+    String msg = "{\"ok\":false,\"message\":" + jsonQuote(otaStatus) + "}";
+    webServer.send(500, "application/json; charset=utf-8", msg);
+  }
+}
+
+void setupWebServer() {
+  static const char* OTA_HEADERS[] = {"X-File-Size"};
+  webServer.collectHeaders(OTA_HEADERS, 1);
+  webServer.on("/", HTTP_GET, handleRoot);
+  webServer.on("/index.html", HTTP_GET, handleRoot);
+  webServer.on("/api/status", HTTP_GET, handleStatus);
+  webServer.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
+  webServer.on("/favicon.ico", HTTP_GET, []() { webServer.send(204); });
+  webServer.onNotFound(handleNotFound);
+  webServer.begin();
+  Serial.println("[HTTP] server started on port 80");
 }
 
 void updateBattery() {
@@ -658,7 +867,7 @@ void resetButtons() {
 bool connectWiFiBlocking(const String& ssid, const String& pass, uint32_t timeoutMs) {
   WiFi.disconnect(false, false);
   delay(150);
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(WIFI_AP_STA);
   WiFi.setSleep(false);
   WiFi.begin(ssid.c_str(), pass.c_str());
   wifiTrying = true;
@@ -675,7 +884,7 @@ bool connectWiFiBlocking(const String& ssid, const String& pass, uint32_t timeou
 bool ensureWiFi(uint32_t timeoutMs) {
   if (WiFi.status() == WL_CONNECTED) return true;
   if (cfgSsid.length() == 0) return false;
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(WIFI_AP_STA);
   WiFi.setSleep(false);
   WiFi.begin(cfgSsid.c_str(), cfgPass.c_str());
   wifiTrying = true;
@@ -918,11 +1127,11 @@ void drawWifiInfo() {
   }
   String host = String(WiFi.getHostname());
 
-  const char* labels[7] = {"狀態", "SSID", "IP位址", "訊號", "閘道", "MAC", "主機名稱"};
-  String values[7] = {status, ssid, ip, rssi, gw, WiFi.macAddress(), host};
+  const char* labels[8] = {"狀態", "SSID", "IP位址", "訊號", "閘道", "MAC", "主機名稱", "AP位址"};
+  String values[8] = {status, ssid, ip, rssi, gw, WiFi.macAddress(), host, WiFi.softAPIP().toString()};
 
-  for (int i = 0; i < 7; i++) {
-    int y = 31 + i * 17;
+  for (int i = 0; i < 8; i++) {
+    int y = 27 + i * 15;
     lcd.setFont(&fonts::efontTW_14);
     lcd.setTextSize(1.0f, 1.0f);
     lcd.setTextDatum(textdatum_t::top_left);
@@ -998,6 +1207,48 @@ void drawDisplayInfo() {
   for (int i = 0; i < 8; i++) {
     lcd.fillRect(5 + i * 39, 124, 38, 22, bars[i]);
   }
+}
+
+void drawOtaScreen() {
+  lcd.fillScreen(C_BG);
+  drawHeader("OTA 更新");
+  drawFooter("P14長按:返回");
+
+  const char* labels[5] = {"AP名稱", "密碼", "網址", "韌體", "狀態"};
+  String values[5] = {
+    AP_SSID,
+    "無(開放)",
+    "http://" + WiFi.softAPIP().toString(),
+    FW_VERSION,
+    otaStatus
+  };
+
+  for (int i = 0; i < 5; i++) {
+    int y = 27 + i * 17;
+    lcd.setFont(&fonts::efontTW_14);
+    lcd.setTextSize(1.0f, 1.0f);
+    lcd.setTextDatum(textdatum_t::top_left);
+    lcd.setTextColor(C_MUTED, C_BG);
+    lcd.drawString(labels[i], 12, y);
+    lcd.setTextColor(i == 4 && otaRunning ? C_ACCENT2 : C_TEXT, C_BG);
+    lcd.drawString(fitText(values[i], 226, &fonts::efontTW_14), 84, y);
+  }
+
+  int barX = 12;
+  int barY = 118;
+  int barW = 296;
+  int barH = 15;
+  lcd.drawRoundRect(barX, barY, barW, barH, 4, C_LINE);
+  int fillW = (barW - 4) * (int)otaProgress / 100;
+  if (fillW > 0) {
+    lcd.fillRoundRect(barX + 2, barY + 2, fillW, barH - 4, 3, otaRunning ? C_ACCENT2 : C_ACCENT);
+  }
+
+  lcd.setFont(&fonts::efontTW_14);
+  lcd.setTextSize(1.0f, 1.0f);
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setTextColor(C_MUTED, C_BG);
+  lcd.drawString("瀏覽器開啟網址即可更新", 160, 143);
 }
 
 void drawWeatherScreen() {
@@ -1352,6 +1603,13 @@ void openDisplayInfo() {
   returnScreen = SCR_SYS_MENU;
   screen = SCR_DISPLAY;
   drawDisplayInfo();
+}
+
+void openOtaScreen() {
+  returnScreen = SCR_MAIN;
+  screen = SCR_OTA;
+  if (otaStatus.length() == 0) otaStatus = "待機";
+  drawOtaScreen();
 }
 
 void adjustScanTop() {
@@ -1718,6 +1976,7 @@ void activateMenuItem() {
     else if (menu.sel == 2) openWeather();
     else if (menu.sel == 3) openClock();
     else if (menu.sel == 4) showStockMenu();
+    else if (menu.sel == 5) openOtaScreen();
   } else if (screen == SCR_SYS_MENU) {
     if (menu.sel == 0) openWifiInfo();
     else if (menu.sel == 1) openSystemInfo();
@@ -1735,6 +1994,7 @@ void activateMenuItem() {
 
 void handleInput(uint8_t evNext, uint8_t evOk) {
   if (screen == SCR_SPLASH) return;
+  if (otaRunning) return;
 
   if (screen == SCR_KEYBOARD) {
     if (evNext == EV_SHORT) {
@@ -1811,6 +2071,12 @@ void handleInput(uint8_t evNext, uint8_t evOk) {
     return;
   }
 
+  if (screen == SCR_OTA) {
+    if (evOk == EV_SHORT) drawOtaScreen();
+    else if (evOk == EV_LONG) goBack();
+    return;
+  }
+
   if (screen == SCR_WIFI_INFO || screen == SCR_SYS_INFO) {
     if (evOk == EV_LONG) goBack();
     return;
@@ -1874,10 +2140,14 @@ void setup() {
   drawSplash();
 
   WiFi.persistent(false);
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(WIFI_AP_STA);
   WiFi.setHostname("TDisplayS3");
   WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
+
+  startAccessPoint();
+  initFileSystem();
+  setupWebServer();
 
   if (cfgSsid.length()) {
     WiFi.begin(cfgSsid.c_str(), cfgPass.c_str());
@@ -1894,6 +2164,8 @@ void setup() {
 }
 
 void loop() {
+  webServer.handleClient();
+
   uint8_t evNext = btnNext.poll();
   uint8_t evOk = btnOk.poll();
   if (evNext != EV_NONE || evOk != EV_NONE) {

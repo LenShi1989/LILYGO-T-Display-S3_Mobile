@@ -1,8 +1,8 @@
 # LILYGO T-Display-S3 控制面板
 
-以 Arduino IDE 開發的 LILYGO T-Display-S3（ESP32-S3）多功能控制面板。使用 LovyanGFX 驅動 170x320 橫向 ST7789 顯示器，提供繁體中文選單、WiFi 設定、天氣、NTP 時鐘、股票報價與折線圖，並在右上角顯示 WiFi 與電池狀態。
+以 Arduino IDE 開發的 LILYGO T-Display-S3（ESP32-S3）多功能控制面板。使用 LovyanGFX 驅動 170x320 橫向 ST7789 顯示器，提供繁體中文選單、WiFi 設定、天氣、NTP 時鐘、股票報價與折線圖，並在右上角顯示 WiFi 與電池狀態。內建 AP + WiFi 用戶端共存模式，可透過瀏覽器進行 OTA 韌體更新。
 
-目前軟體版本：`1.0.2`
+目前軟體版本：`1.1.0`
 
 ## 功能
 
@@ -15,10 +15,11 @@
 | 天氣 | Open-Meteo 即時天氣與今日高低溫 |
 | 時間 | NTP 網路對時，UTC+8 數字時鐘 |
 | 股票 | Yahoo Finance 報價與當日 5 分鐘折線圖 |
+| OTA更新 | AP 熱點、瀏覽器 OTA 韌體更新資訊 |
 
 ### 系統狀態
 
-- WiFi 資訊：連線狀態、SSID、IP、訊號強度、閘道、MAC、主機名稱。
+- WiFi 資訊：連線狀態、SSID、IP、訊號強度、閘道、MAC、主機名稱、AP 位址。
 - 系統資訊：晶片型號、核心頻率、Flash、PSRAM、記憶體、運作時間、電池電壓、SDK 版本。
 - 顯示器：驅動晶片、面板解析度、畫布解析度、匯流排、亮度與色彩測試條。
 - 顯示器頁面短按 P0 可切換四段亮度。
@@ -56,6 +57,18 @@
 - 台灣習慣紅漲綠跌。
 - 短按 P14 重新整理。
 
+### OTA 更新
+
+- 開機即啟動 AP 熱點，SSID `TTGO-OTA-Setup`，免密碼（開放網路）。
+- AP 與 WiFi 用戶端（STA）共存，連線路由器時不影響熱點。
+- 熱點 IP 固定為 `192.168.4.1`，Web 伺服器監聽 80 埠。
+- `index.html` 儲存於 SPIFFS，由 `webServer` 讀取後回傳。
+- 前端支援拖放或選擇 `.bin`，顯示上傳進度、速度與裝置狀態。
+- 後端使用 ESP32 `Update` 函式庫寫入 OTA 分割區，完成後自動重新啟動。
+- OTA 只會寫入 app 分割區，不會更動 SPIFFS 內的 `index.html`。
+- 更新期間裝置按鍵暫停回應，畫面顯示接收進度。
+- OTA 畫面顯示 AP 名稱、網址、韌體版本與進度。
+
 ### 狀態列
 
 - 右上角顯示 WiFi 圖示。
@@ -69,12 +82,26 @@
 LILYGO T-Display-S3/
 ├─ README.md
 ├─ TDisplayS3_Menu/
-│  └─ TDisplayS3_Menu.ino
+│  ├─ TDisplayS3_Menu.ino
+│  ├─ partitions.csv
+│  └─ data/
+│     └─ index.html
 └─ docs/
    └─ 硬體腳位參考圖片
 ```
 
-所有程式碼集中於 `TDisplayS3_Menu/TDisplayS3_Menu.ino`，不需要額外的字型檔或圖檔。中文使用 LovyanGFX 內建的 `efontTW_14` 與 `efontTW_16_b`。
+主要程式集中於 `TDisplayS3_Menu/TDisplayS3_Menu.ino`。OTA 前端頁面為 `TDisplayS3_Menu/data/index.html`，需打包寫入 SPIFFS。中文使用 LovyanGFX 內建的 `efontTW_14` 與 `efontTW_16_b`。
+
+`TDisplayS3_Menu/partitions.csv` 會覆寫開發板預設分割表，提供兩個 3MB OTA 分割區與約 9.9MB SPIFFS：
+
+| 分割區 | 類型 | Offset | 大小 |
+| --- | --- | --- | --- |
+| nvs | data / nvs | `0x9000` | 20KB |
+| otadata | data / ota | `0xE000` | 8KB |
+| app0 | app / ota_0 | `0x10000` | 3MB |
+| app1 | app / ota_1 | `0x310000` | 3MB |
+| spiffs | data / spiffs | `0x610000` | 9.875MB |
+| coredump | data / coredump | `0xFF0000` | 64KB |
 
 ## 硬體需求
 
@@ -147,6 +174,8 @@ LILYGO T-Display-S3/
 4. 若無法上傳或序列埠沒有出現，確認 USB CDC On Boot 已啟用，或按住 BOOT 鍵再上傳。
 5. 上傳。
 
+> 第一次加入 OTA 功能時，`sketch 資料夾`中的 `partitions.csv` 會自動套用新的分割表，請以 USB 重新上傳一次完整韌體，舊的分割表才會被取代。
+
 命令列編譯方式：
 
 ```powershell
@@ -156,9 +185,29 @@ LILYGO T-Display-S3/
 目前編譯結果：
 
 ```text
-Sketch 使用 2217879 位元組（70%）的程式儲存空間。最大為 3145728 位元組
-全域變數使用 51224 位元組 (15%) 的動態記憶體，保留 276456 位元組給區域變數。最大 327680 位元組
+Sketch 使用 2294363 位元組（72%）的程式儲存空間。最大為 3145728 位元組
+全域變數使用 52040 位元組 (15%) 的動態記憶體，保留 275640 位元組給區域變數。最大 327680 位元組
 ```
+
+### 上傳 SPIFFS 頁面
+
+Arduino IDE 2.x 沒有內建 SPIFFS 上傳功能。請先完成一次 USB 韌體上傳（讓新的分割表生效），再於專案根目錄執行：
+
+```powershell
+$mkspiffs = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\mkspiffs\0.2.3\mkspiffs.exe"
+$esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\esptool.exe"
+
+# 建立 SPIFFS 映像（大小需與 partitions.csv 的 spiffs 分割區相同）
+& $mkspiffs -c "TDisplayS3_Menu\data" -b 4096 -p 256 -s 0x9E0000 "spiffs.bin"
+
+# 寫入分割區，COM5 請改成實際序列埠
+& $esptool --chip esp32s3 --port COM5 --baud 921600 write-flash 0x610000 "spiffs.bin"
+```
+
+- `mkspiffs` 與 `esptool` 的版本目錄可能不同，請依 `%LOCALAPPDATA%\Arduino15\packages\esp32\tools\` 實際路徑調整。
+- 燒錄後開啟 `http://192.168.4.1` 應可看到 OTA 頁面。
+- 若頁面顯示「SPIFFS 未就緒」，代表 `/index.html` 不存在或分割表不符。
+- 之後更新 `data/index.html` 只需重新打包 SPIFFS，不需要重新上傳主程式。
 
 ## 操作方式
 
@@ -183,6 +232,7 @@ Sketch 使用 2217879 位元組（70%）的程式儲存空間。最大為 314572
 | 股票報價/走勢 | 無作用 | 短按更新；長按返回 |
 | 顯示器 | 切換亮度 | 長按返回 |
 | WiFi 資訊/系統資訊 | 無作用 | 長按返回 |
+| OTA 更新 | 無作用 | 短按重新整理；長按返回 |
 | 清除設定 | 切換是/否 | 短按確認；長按返回 |
 
 ### 螢幕鍵盤
@@ -195,6 +245,35 @@ Sketch 使用 2217879 位元組（70%）的程式儲存空間。最大為 314572
 - `OK`：確認。
 - 輸入密碼時以 `*` 遮蔽。
 - 密碼輸入完成後按 `OK` 開始連線。
+
+## OTA 網頁更新
+
+### 連線方式
+
+1. 手機或電腦連線 WiFi `TTGO-OTA-Setup`（開放網路，無密碼）。
+2. 瀏覽器開啟 `http://192.168.4.1`。
+3. 若裝置同時連上路由器，也可使用裝置的 STA IP 開啟同一頁面。
+4. 部分手機會因熱點沒有網際網路而自動改用行動網路，請關閉行動網路或選擇「維持連線」。
+
+### 後端 API
+
+| 路徑 | 方法 | 說明 |
+| --- | --- | --- |
+| `/`、`/index.html` | GET | 從 SPIFFS 讀取 `index.html` |
+| `/api/status` | GET | 韌體版本、AP/STA、記憶體、SPIFFS 與運作時間 |
+| `/update` | POST | 接收 `.bin` 並寫入 OTA 分割區，完成後重啟 |
+
+- `/update` 使用 `multipart/form-data`，前端以 `X-File-Size` 標頭提供檔案大小以計算進度。
+- 後端依序呼叫 `Update.begin()`、`Update.write()`、`Update.end(true)`。
+- 更新成功回傳 `{"ok":true}` 後約 1.2 秒重新啟動。
+- 更新失敗回傳 HTTP 500 與錯誤訊息，裝置維持原韌體。
+
+### 更新流程
+
+1. Arduino IDE 選擇「草稿碼 → 匯出已編譯的二進位檔」，產生 `.bin`。
+2. 於 OTA 頁面拖放或選擇 `.bin`。
+3. 按「開始更新」，等待進度到 100%。
+4. 裝置自動重啟，頁面會輪詢 `/api/status` 直到重新上線並顯示新版本。
 
 ## 設定儲存
 
@@ -218,7 +297,10 @@ Sketch 使用 2217879 位元組（70%）的程式儲存空間。最大為 314572
 | Open-Meteo | `https://api.open-meteo.com/v1/forecast` | 即時天氣與每日高低溫 |
 | Yahoo Finance | `https://query1.finance.yahoo.com/v8/finance/chart/{symbol}` | 股票報價與 5 分鐘走勢 |
 | NTP | `pool.ntp.org`、`time.google.com`、`time.cloudflare.com` | 網路對時 |
+| OTA Web | `http://192.168.4.1` | SPIFFS 頁面與韌體更新 |
 
+- WiFi 模式為 `WIFI_AP_STA`，AP 與 STA 同時運作。
+- AP SSID `TTGO-OTA-Setup` 為開放網路，最多 4 個連線。
 - HTTPS 使用 `WiFiClientSecure`，目前呼叫 `setInsecure()` 略過憑證驗證。
 - HTTP 請求會跟隨重新導向。
 - 天氣請求逾時 12 秒，股票請求逾時 15 秒。
@@ -243,6 +325,8 @@ Sketch 使用 2217879 位元組（70%）的程式儲存空間。最大為 314572
 - `WeatherData`：天氣資料與有效性。
 - `StockData`：股票報價、時間戳與走勢點。
 - `Preferences`：讀寫 NVS 設定。
+- `spiffsReady`、`otaRunning`、`otaProgress`、`otaTotalSize`、`otaStatus`：SPIFFS 與 OTA 狀態。
+- `webServer`：80 埠 HTTP 伺服器。
 
 ### 按鍵
 
@@ -269,10 +353,11 @@ Sketch 使用 2217879 位元組（70%）的程式儲存空間。最大為 314572
 │  └─ 清除設定
 ├─ 天氣
 ├─ 時間
-└─ 股票
-   ├─ 股票查詢
-   ├─ 折線圖
-   └─ 更改代號 → 鍵盤
+├─ 股票
+│  ├─ 股票查詢
+│  ├─ 折線圖
+│  └─ 更改代號 → 鍵盤
+└─ OTA更新
 ```
 
 畫面切換由 `handleInput()` 依 `screen` 分派，選單移動由 `menuMove()` 處理，選單項目由 `activateMenuItem()` 執行。
@@ -292,6 +377,27 @@ ensureWiFi()
 - `fetchStock()` 先請求 `1d`，若走勢點不足則改用 `5d`；`parseStockPayload()` 解析 `chart.result[0].meta` 與 `indicators.quote[0].close`，最多保留 120 個走勢點，並只保留最後一個交易日的資料。
 - `ensureTimeService()` 在首次連線後啟動 NTP。
 
+### OTA 與 HTTP
+
+```text
+setup()
+  ├─ startAccessPoint() → WiFi.softAP("TTGO-OTA-Setup")
+  ├─ initFileSystem()   → SPIFFS.begin(true)
+  └─ setupWebServer()   → /
+                          /api/status
+                          /update
+
+loop()
+  └─ webServer.handleClient()
+       └─ handleUpdateUpload() → Update.begin/write/end → ESP.restart()
+```
+
+- `handleRoot()` 以 `streamFile()` 從 SPIFFS 回傳 `index.html`，缺少檔案時回傳提示頁。
+- `handleStatus()` 以 JSON 回傳版本、AP/STA、記憶體與 SPIFFS 資訊。
+- `handleUpdateUpload()` 依 `UPLOAD_FILE_START/WRITE/END/ABORTED` 狀態寫入韌體。
+- `handleUpdateDone()` 檢查 `Update.hasError()`，成功時延遲重啟。
+- 上傳期間 `handleInput()` 直接返回，避免按鍵操作干擾寫入。
+
 ### 繪圖
 
 - `drawHeader()`：標題列與狀態圖示。
@@ -299,6 +405,7 @@ ensureWiFi()
 - `drawStatusIcons()`：WiFi 與電池圖示。
 - `drawMenuScreen()`：通用選單與捲動軸。
 - `drawWeatherScreen()`、`drawClockScreen()`、`drawStockQuoteScreen()`、`drawStockChartScreen()`：各功能頁。
+- `drawOtaScreen()`：AP 資訊、韌體版本與 OTA 進度。
 - `drawKeyboard()`：螢幕鍵盤。
 - `drawBusy()`、`showToast()`：載入與提示訊息。
 
@@ -306,13 +413,14 @@ ensureWiFi()
 
 `loop()` 每次執行：
 
-1. 輪詢兩個按鍵並處理輸入。
-2. 更新 WiFi 連線狀態。
-3. 連線成功時啟動 NTP。
-4. 每 15 秒更新電池。
-5. 每秒更新狀態圖示。
-6. 時鐘頁面每秒更新時間。
-7. 短暫延遲 5ms。
+1. 呼叫 `webServer.handleClient()` 處理 HTTP 與 OTA 上傳。
+2. 輪詢兩個按鍵並處理輸入。
+3. 更新 WiFi 連線狀態。
+4. 連線成功時啟動 NTP。
+5. 每 15 秒更新電池。
+6. 每秒更新狀態圖示。
+7. 時鐘頁面每秒更新時間。
+8. 短暫延遲 5ms。
 
 ## 疑難排解
 
@@ -336,6 +444,33 @@ ensureWiFi()
 - 確認序列埠驅動正常。
 - 嘗試按住 BOOT 鍵後再上傳。
 - 確認 Arduino IDE 的 USB CDC On Boot 設定。
+
+### 找不到 OTA 熱點
+
+- 確認裝置已開機並完成螢幕初始化。
+- 確認主選單的「OTA更新」頁面顯示 AP 名稱 `TTGO-OTA-Setup`。
+- 熱點為 2.4GHz，舊裝置請確認支援。
+- 若剛重新開機，請等待數秒再重新掃描。
+
+### OTA 頁面打不開
+
+- 確認已連線 `TTGO-OTA-Setup`，網址為 `http://192.168.4.1`（不要使用 `https://`）。
+- 手機若自動切換行動網路，請關閉行動數據或選擇「維持連線」。
+- 若畫面顯示「SPIFFS 未就緒」，請依「上傳 SPIFFS 頁面」章節重新打包並燒錄 `data/`。
+
+### OTA 更新失敗
+
+- 確認上傳的是 Arduino IDE 匯出的 `.bin`，不是 `.elf`、`.hex` 或開機載入器。
+- 韌體不可超過 OTA 分割區大小（3MB）。
+- 更新期間請保持供電，避免 AP 斷線。
+- 若顯示 `not enough space`，確認 `partitions.csv` 已隨韌體一起上傳。
+- 裝置更新失敗時會保留原韌體，可重新整理頁面再試。
+
+### 更新後無法開機
+
+- 以 USB 重新上傳完整韌體，確認分割表與程式一致。
+- 確認上傳的 `.bin` 是針對 `LilyGo T-Display-S3` 編譯。
+- 若仍無法開機，可使用 `esptool erase-flash` 清除後重新上傳。
 
 ### WiFi 無法連線
 
@@ -376,8 +511,9 @@ ensureWiFi()
 ## 注意事項
 
 - WiFi 帳密以明文儲存在 NVS，請勿在共用設備上使用重要帳密。
+- OTA AP 為開放網路且無驗證，任何在範圍內的人都能開啟更新頁面，請僅在受信任環境使用。
+- OTA 更新期間請保持供電，避免寫入中斷。
 - `setInsecure()` 不驗證 TLS 憑證，僅適合個人裝置與受信任網路。
 - Yahoo Finance API 非官方公開 API，長期可用性不受保證。
 - 股票資料可能延遲，僅供參考，不構成投資建議。
-- 本專案未包含 OTA 更新功能。
 - 若要擴充天氣地點設定，可新增緯度、經度與城市輸入畫面，並沿用現有鍵盤元件。
