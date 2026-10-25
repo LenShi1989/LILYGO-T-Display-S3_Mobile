@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>T-Display-S3 OTA 更新</title>
+<meta name="theme-color" content="#070b14">
+<title>T-Display-S3 控制台</title>
 <style>
   :root {
     --bg: #070b14;
@@ -22,7 +23,6 @@
   html, body { min-height: 100%; }
   body {
     margin: 0;
-    padding: 28px 16px 48px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC",
                  "Microsoft JhengHei", "PingFang TC", sans-serif;
     color: var(--text);
@@ -31,22 +31,81 @@
       radial-gradient(700px 420px at -10% 20%, #0d2b28 0%, transparent 60%),
       var(--bg);
   }
-  .wrap { width: 100%; max-width: 780px; margin: 0 auto; }
-  header {
-    display: flex; align-items: center; gap: 14px;
-    margin-bottom: 22px;
+
+  /* ---------- layout ---------- */
+  .shell { display: flex; align-items: flex-start; min-height: 100vh; }
+  .sidebar {
+    position: sticky; top: 0; align-self: flex-start;
+    width: 240px; flex: 0 0 240px; height: 100vh;
+    display: flex; flex-direction: column; gap: 22px;
+    padding: 22px 16px;
+    border-right: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(13, 22, 38, .97), rgba(7, 11, 20, .97));
   }
+  .brand { display: flex; align-items: center; gap: 12px; padding: 0 4px; }
   .logo {
-    width: 46px; height: 46px; flex: 0 0 auto;
+    width: 42px; height: 42px; flex: 0 0 auto;
     display: grid; place-items: center;
-    border-radius: 13px;
+    border-radius: 12px;
     background: linear-gradient(145deg, #1c3350, #0f1b2e);
     border: 1px solid var(--line);
     color: var(--accent);
   }
-  .logo svg { width: 25px; height: 25px; }
-  h1 { margin: 0; font-size: 20px; letter-spacing: .4px; }
-  .sub { margin: 3px 0 0; font-size: 12.5px; color: var(--muted); }
+  .logo svg { width: 23px; height: 23px; }
+  .brand-text strong { display: block; font-size: 14px; letter-spacing: .3px; }
+  .brand-text span { display: block; margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+
+  .nav { display: flex; flex-direction: column; gap: 8px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 11px; width: 100%;
+    padding: 10px 11px;
+    border: 1px solid transparent; border-radius: 11px;
+    background: transparent; color: var(--muted);
+    font: inherit; text-align: left; cursor: pointer;
+    transition: background .18s, color .18s, border-color .18s;
+  }
+  .nav-item:hover { background: rgba(56, 189, 248, .06); color: var(--text); }
+  .nav-item.active {
+    background: rgba(45, 212, 191, .1);
+    border-color: rgba(45, 212, 191, .38);
+    color: var(--text);
+  }
+  .nav-ico {
+    width: 34px; height: 34px; flex: 0 0 auto;
+    display: grid; place-items: center;
+    border-radius: 9px; border: 1px solid var(--line);
+    background: var(--card2); color: var(--muted);
+  }
+  .nav-item.active .nav-ico {
+    background: rgba(45, 212, 191, .15);
+    border-color: rgba(45, 212, 191, .4);
+    color: var(--accent);
+  }
+  .nav-ico svg { width: 18px; height: 18px; }
+  .nav-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .nav-text > span { font-size: 13.5px; font-weight: 600; }
+  .nav-text small { font-size: 11px; color: #64748b; }
+  .nav-item.active .nav-text small { color: var(--muted); }
+
+  .side-foot {
+    margin-top: auto;
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 8px 0;
+    border-top: 1px solid var(--line);
+    font-size: 11.5px; color: var(--muted);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.off { background: var(--danger); }
+
+  .main {
+    flex: 1 1 auto; min-width: 0; width: 100%; max-width: 1000px;
+    margin: 0 auto; padding: 26px 24px 44px;
+  }
+  .topbar { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 20px; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: .4px; }
+  .sub { margin: 5px 0 0; font-size: 12.5px; color: var(--muted); }
+
   .badge {
     margin-left: auto;
     display: inline-flex; align-items: center; gap: 7px;
@@ -65,9 +124,10 @@
   .badge.offline { color: var(--danger); border-color: #4a2020; background: #240f0f; }
   .badge.offline::before { background: var(--danger); }
 
+  /* ---------- stats ---------- */
   .grid {
     display: grid; gap: 10px;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
     margin-bottom: 18px;
   }
   .stat {
@@ -78,16 +138,18 @@
   }
   .stat .k { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 5px; }
   .stat .v {
+    display: block;
     font-size: 14px; font-weight: 600;
     word-break: break-all; font-variant-numeric: tabular-nums;
   }
 
+  /* ---------- cards ---------- */
   .card {
     padding: 20px;
     margin-bottom: 16px;
     border: 1px solid var(--line);
     border-radius: 16px;
-    background: linear-gradient(180deg, rgba(22,34,59,.9), rgba(17,26,46,.9));
+    background: linear-gradient(180deg, rgba(22, 34, 59, .9), rgba(17, 26, 46, .9));
     box-shadow: 0 18px 40px -30px #000;
   }
   .card h2 {
@@ -96,10 +158,22 @@
     color: var(--accent);
     text-transform: uppercase;
   }
+  .card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .card-head h2 { margin: 0; }
+  .card-head .ghost { margin-left: auto; }
+  .pill {
+    display: inline-block; margin-left: 8px;
+    padding: 2px 9px; border-radius: 999px;
+    background: rgba(45, 212, 191, .12); color: var(--accent);
+    font-size: 11.5px; font-weight: 600;
+    letter-spacing: 0; text-transform: none;
+    vertical-align: 2px;
+  }
 
+  /* ---------- drop zone ---------- */
   .drop {
     display: grid; place-items: center; gap: 8px;
-    padding: 30px 18px;
+    padding: 28px 18px;
     border: 1.5px dashed #33445f;
     border-radius: 13px;
     background: rgba(7, 11, 20, .45);
@@ -118,6 +192,33 @@
   .drop .link { color: var(--accent2); font-weight: 600; }
   .drop .hint { font-size: 11.5px; color: #64748b; }
 
+  /* ---------- upload queue ---------- */
+  .queue { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .q-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--card2);
+  }
+  .q-item img {
+    width: 64px; height: 34px; flex: 0 0 auto;
+    object-fit: cover; border-radius: 6px;
+    border: 1px solid var(--line); background: #000;
+  }
+  .q-meta { min-width: 0; flex: 1 1 auto; }
+  .q-name {
+    font-size: 12.5px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .q-size { margin-top: 2px; font-size: 11px; color: var(--muted); }
+  .q-del {
+    flex: 0 0 auto;
+    border: 1px solid var(--line); background: transparent;
+    color: var(--muted); border-radius: 7px;
+    padding: 6px 9px; font-size: 11.5px; cursor: pointer;
+  }
+  .q-del:hover { color: var(--danger); border-color: #4a2020; }
+
+  /* ---------- progress ---------- */
   .file {
     display: flex; align-items: center; gap: 12px;
     margin-top: 14px; padding: 12px 14px;
@@ -135,13 +236,8 @@
     font-size: 13.5px; font-weight: 600;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .file-size { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
-  .file .ghost {
-    margin-left: auto; flex: 0 0 auto;
-    border: 1px solid var(--line); background: transparent;
-    color: var(--muted); border-radius: 8px;
-    padding: 7px 11px; font-size: 12px; cursor: pointer;
-  }
+  .file-size { margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+  .file .ghost { margin-left: auto; flex: 0 0 auto; }
   .file .ghost:hover { color: var(--danger); border-color: #4a2020; }
 
   .bar-wrap { margin-top: 16px; }
@@ -175,6 +271,15 @@
   .btn:active:not(:disabled) { transform: translateY(1px); }
   .btn:disabled { opacity: .38; cursor: not-allowed; box-shadow: none; }
 
+  .ghost {
+    border: 1px solid var(--line); background: transparent;
+    color: var(--muted); border-radius: 8px;
+    padding: 7px 11px; font-size: 12px; cursor: pointer;
+    font: inherit; font-size: 12px;
+  }
+  .ghost:hover:not(:disabled) { color: var(--text); border-color: #3b4d6d; }
+  .ghost:disabled { opacity: .45; cursor: not-allowed; }
+
   .msg { margin: 14px 0 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
   .msg.ok { color: var(--ok); }
   .msg.err { color: var(--danger); }
@@ -186,6 +291,40 @@
     border: 1px solid rgba(251, 191, 36, .25);
   }
 
+  /* ---------- photo library ---------- */
+  .photos {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  }
+  .photo {
+    position: relative; margin: 0;
+    border: 1px solid var(--line); border-radius: 12px;
+    overflow: hidden; background: var(--card2);
+  }
+  .photo .thumb {
+    display: block; width: 100%;
+    aspect-ratio: 320 / 170;
+    object-fit: cover; background: #000;
+  }
+  .photo .del {
+    position: absolute; top: 7px; right: 7px;
+    width: 26px; height: 26px;
+    display: grid; place-items: center;
+    border-radius: 8px;
+    border: 1px solid rgba(248, 113, 113, .5);
+    background: rgba(7, 11, 20, .72);
+    color: var(--danger); font-size: 16px; line-height: 1;
+    cursor: pointer;
+  }
+  .photo .del:hover { background: rgba(248, 113, 113, .18); }
+  .photo .del:disabled { opacity: .4; cursor: not-allowed; }
+  .photo figcaption { padding: 8px 10px 9px; }
+  .pname {
+    display: block; font-size: 11.5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .psize { display: block; margin-top: 2px; font-size: 10.5px; color: var(--muted); }
+
   .tips ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.85; }
   .tips strong { color: var(--text); }
   code {
@@ -196,87 +335,202 @@
   .hidden { display: none !important; }
   footer { margin-top: 18px; text-align: center; font-size: 11.5px; color: #5b6b83; }
 
-  @media (max-width: 520px) {
-    body { padding-top: 20px; }
-    h1 { font-size: 18px; }
-    .badge { padding: 5px 9px; }
+  @media (max-width: 860px) {
+    .shell { flex-direction: column; }
+    .sidebar {
+      position: sticky; top: 0; z-index: 20;
+      width: 100%; flex: 0 0 auto; height: auto;
+      flex-direction: row; align-items: center; gap: 14px;
+      padding: 11px 14px;
+      border-right: 0; border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(12px);
+    }
+    .brand { padding: 0; }
+    .brand-text span { display: none; }
+    .nav { flex-direction: row; gap: 8px; margin-left: auto; }
+    .nav-item { width: auto; padding: 7px 10px; }
+    .nav-text small { display: none; }
+    .nav-ico { width: 28px; height: 28px; border-radius: 8px; }
+    .nav-ico svg { width: 16px; height: 16px; }
+    .side-foot { display: none; }
+    .main { padding: 20px 14px 40px; }
+    h1 { font-size: 19px; }
     .grid { grid-template-columns: repeat(2, 1fr); }
     .card { padding: 16px; }
+  }
+  @media (max-width: 460px) {
+    .brand-text { display: none; }
+    .badge { padding: 5px 9px; }
   }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div class="logo" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="6" width="18" height="12" rx="2"></rect>
-        <path d="M7 10h4M7 14h7M17 10v4"></path>
-      </svg>
-    </div>
-    <div>
-      <h1>OTA 韌體更新</h1>
-      <p class="sub">LILYGO T-Display-S3 · ESP32-S3 · AP + WiFi 共存</p>
-    </div>
-    <span id="badge" class="badge">連線中</span>
-  </header>
-
-  <section class="grid">
-    <div class="stat"><span class="k">韌體版本</span><span class="v" id="st-version">--</span></div>
-    <div class="stat"><span class="k">AP 位址</span><span class="v" id="st-apip">--</span></div>
-    <div class="stat"><span class="k">WiFi 用戶端</span><span class="v" id="st-sta">--</span></div>
-    <div class="stat"><span class="k">SPIFFS</span><span class="v" id="st-fs">--</span></div>
-    <div class="stat"><span class="k">可用記憶體</span><span class="v" id="st-heap">--</span></div>
-    <div class="stat"><span class="k">運作時間</span><span class="v" id="st-uptime">--</span></div>
-  </section>
-
-  <section class="card">
-    <h2>上傳韌體</h2>
-    <div id="drop" class="drop" role="button" tabindex="0"
-         aria-label="選擇或拖放韌體檔">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 16V4"></path>
-        <path d="m7 9 5-5 5 5"></path>
-        <path d="M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"></path>
-      </svg>
-      <p>拖放 <strong>.bin</strong> 韌體到此處，或 <span class="link">選擇檔案</span></p>
-      <p class="hint">上限取決於 OTA 分割區空間（目前約 3 MB）</p>
-      <input id="file" type="file" accept=".bin,application/octet-stream" hidden>
-    </div>
-
-    <div id="fileBox" class="file hidden">
-      <div class="file-ico">BIN</div>
-      <div class="file-meta">
-        <div class="file-name" id="fileName">--</div>
-        <div class="file-size" id="fileSize">--</div>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="6" width="18" height="12" rx="2"></rect>
+          <path d="M7 10h4M7 14h7M17 10v4"></path>
+        </svg>
       </div>
-      <button id="clear" class="ghost" type="button">移除</button>
+      <div class="brand-text">
+        <strong>T-Display S3</strong>
+        <span>控制面板</span>
+      </div>
     </div>
 
-    <div id="barWrap" class="bar-wrap hidden">
-      <div class="bar"><div id="bar" class="fill"></div></div>
-      <div class="bar-meta"><span id="pct">0%</span><span id="speed"></span></div>
+    <nav class="nav" aria-label="功能選單">
+      <button class="nav-item active" type="button" data-view="photos">
+        <span class="nav-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+            <circle cx="8.5" cy="9.5" r="1.5"></circle>
+            <path d="m21 16-5-5-6 6-3-3-4 4"></path>
+          </svg>
+        </span>
+        <span class="nav-text"><span>電子相片</span><small>上傳圖檔</small></span>
+      </button>
+      <button class="nav-item" type="button" data-view="ota">
+        <span class="nav-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+            <path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"></path>
+          </svg>
+        </span>
+        <span class="nav-text"><span>OTA 更新</span><small>韌體更新</small></span>
+      </button>
+    </nav>
+
+    <div class="side-foot">
+      <span id="sideDot" class="dot"></span>
+      <span id="sideState">連線中</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="pageTitle">電子相片</h1>
+        <p class="sub" id="pageSub">上傳圖檔，裝置會以全螢幕播放</p>
+      </div>
+      <span id="badge" class="badge">連線中</span>
+    </header>
+
+    <section class="grid" aria-label="裝置狀態">
+      <div class="stat"><span class="k">韌體版本</span><span class="v" id="st-version">--</span></div>
+      <div class="stat"><span class="k">相片數量</span><span class="v" id="st-photos">--</span></div>
+      <div class="stat"><span class="k">AP 位址</span><span class="v" id="st-apip">--</span></div>
+      <div class="stat"><span class="k">WiFi 用戶端</span><span class="v" id="st-sta">--</span></div>
+      <div class="stat"><span class="k">SPIFFS</span><span class="v" id="st-fs">--</span></div>
+      <div class="stat"><span class="k">可用記憶體</span><span class="v" id="st-heap">--</span></div>
+      <div class="stat"><span class="k">運作時間</span><span class="v" id="st-uptime">--</span></div>
+    </section>
+
+    <!-- ================= 電子相片 ================= -->
+    <div id="view-photos" class="view">
+      <section class="card">
+        <h2>上傳圖檔</h2>
+        <div id="photoDrop" class="drop" role="button" tabindex="0"
+             aria-label="選擇或拖放圖片">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+            <circle cx="8.5" cy="9.5" r="1.5"></circle>
+            <path d="m21 16-5-5-6 6-3-3-4 4"></path>
+          </svg>
+          <p>拖放圖片到此處，或 <span class="link">選擇檔案</span></p>
+          <p class="hint">支援 JPG / PNG，可一次選擇多張</p>
+          <input id="photoInput" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" multiple hidden>
+        </div>
+
+        <div id="queue" class="queue"></div>
+
+        <div id="photoBarWrap" class="bar-wrap hidden">
+          <div class="bar"><div id="photoBar" class="fill"></div></div>
+          <div class="bar-meta"><span id="photoPct">0%</span><span id="photoSpeed"></span></div>
+        </div>
+
+        <button id="photoUpload" class="btn" type="button" disabled>上傳圖片</button>
+        <p id="photoMsg" class="msg">選擇圖片後會自動縮放為 320×170 再上傳。</p>
+
+        <p class="warn">圖片會以 320×170 JPEG 儲存在裝置 SPIFFS，上傳期間請保持 AP 連線，勿關閉頁面。</p>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>相片庫 <span id="photoCount" class="pill">0 張</span></h2>
+          <button id="photoRefresh" class="ghost" type="button">重新整理</button>
+        </div>
+        <div id="photoGrid" class="photos"></div>
+        <p id="photoEmpty" class="msg">尚無相片，請先上傳圖檔。</p>
+        <p id="photoUsage" class="msg"></p>
+      </section>
+
+      <section class="card tips">
+        <h2>播放方式</h2>
+        <ol>
+          <li>在裝置主選單選擇 <strong>電子相片 → 播放相片</strong>。</li>
+          <li>每 6 秒自動切換下一張，短按 <code>P0</code> 可手動切換。</li>
+          <li>長按 <code>P14</code> 返回選單，相片會持續保存在 SPIFFS。</li>
+          <li>「相片資訊」可查看張數、容量與上傳網址。</li>
+        </ol>
+      </section>
     </div>
 
-    <button id="upload" class="btn" type="button" disabled>開始更新</button>
-    <p id="msg" class="msg">請選擇編譯產生的韌體檔（.bin）。</p>
+    <!-- ================= OTA 更新 ================= -->
+    <div id="view-ota" class="view hidden">
+      <section class="card">
+        <h2>上傳韌體</h2>
+        <div id="drop" class="drop" role="button" tabindex="0"
+             aria-label="選擇或拖放韌體檔">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 16V4"></path>
+            <path d="m7 9 5-5 5 5"></path>
+            <path d="M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"></path>
+          </svg>
+          <p>拖放 <strong>.bin</strong> 韌體到此處，或 <span class="link">選擇檔案</span></p>
+          <p class="hint">上限取決於 OTA 分割區空間（目前約 3 MB）</p>
+          <input id="file" type="file" accept=".bin,application/octet-stream" hidden>
+        </div>
 
-    <p class="warn">更新期間請保持供電，勿關閉頁面或離開 AP 網路。寫入完成後裝置會自動重新啟動。</p>
-  </section>
+        <div id="fileBox" class="file hidden">
+          <div class="file-ico">BIN</div>
+          <div class="file-meta">
+            <div class="file-name" id="fileName">--</div>
+            <div class="file-size" id="fileSize">--</div>
+          </div>
+          <button id="clear" class="ghost" type="button">移除</button>
+        </div>
 
-  <section class="card tips">
-    <h2>使用方式</h2>
-    <ol>
-      <li>Arduino IDE：<strong>草稿碼 → 匯出已編譯的二進位檔</strong>，取得 <code>.bin</code>。</li>
-      <li>連線 AP <code>TTGO-OTA-Setup</code>（免密碼），開啟 <code>http://192.168.4.1</code>。</li>
-      <li>選擇檔案後按「開始更新」，等待進度完成。</li>
-      <li>裝置自動重啟後，本頁會重新連線並顯示新版本。</li>
-    </ol>
-  </section>
+        <div id="barWrap" class="bar-wrap hidden">
+          <div class="bar"><div id="bar" class="fill"></div></div>
+          <div class="bar-meta"><span id="pct">0%</span><span id="speed"></span></div>
+        </div>
 
-  <footer>T-Display-S3 Control Panel · OTA Web Updater</footer>
+        <button id="upload" class="btn" type="button" disabled>開始更新</button>
+        <p id="msg" class="msg">請選擇編譯產生的韌體檔（.bin）。</p>
+
+        <p class="warn">更新期間請保持供電，勿關閉頁面或離開 AP 網路。寫入完成後裝置會自動重新啟動。</p>
+      </section>
+
+      <section class="card tips">
+        <h2>使用方式</h2>
+        <ol>
+          <li>Arduino IDE：<strong>草稿碼 → 匯出已編譯的二進位檔</strong>，取得 <code>.bin</code>。</li>
+          <li>連線 AP <code>TTGO-OTA-Setup</code>（免密碼），開啟 <code>http://192.168.4.1</code>。</li>
+          <li>選擇檔案後按「開始更新」，等待進度完成。</li>
+          <li>裝置自動重啟後，本頁會重新連線並顯示新版本。</li>
+        </ol>
+      </section>
+    </div>
+
+    <footer>T-Display-S3 Control Panel · Photo Gallery &amp; OTA Updater</footer>
+  </main>
 </div>
 
 <script>
@@ -284,10 +538,8 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var file = null;
-  var uploading = false;
-  var rebootTimer = null;
 
+  /* ---------------------------------------------------------- helpers */
   function fmtBytes(n) {
     n = Number(n) || 0;
     if (n < 1024) return n + " B";
@@ -311,6 +563,8 @@
     var b = $("badge");
     b.className = "badge" + (state ? " " + state : "");
     b.textContent = text;
+    $("sideDot").className = "dot" + (state === "online" ? " on" : (state === "offline" ? " off" : ""));
+    $("sideState").textContent = text;
   }
 
   function setMsg(text, kind) {
@@ -325,6 +579,7 @@
     $("pct").textContent = pct + "%";
   }
 
+  /* ---------------------------------------------------------- status */
   function refresh() {
     return fetch("/api/status", { cache: "no-store" })
       .then(function (r) {
@@ -335,14 +590,15 @@
         setBadge("online", "已連線");
         $("st-version").textContent = "v" + s.version;
         $("st-apip").textContent = s.apIp || "--";
-        $("st-sta").textContent = s.staConnected
-          ? (s.staSsid || "已連線")
-          : "未連線";
+        $("st-sta").textContent = s.staConnected ? (s.staSsid || "已連線") : "未連線";
         $("st-fs").textContent = s.fsReady
           ? fmtBytes(s.fsUsed) + " / " + fmtBytes(s.fsTotal)
           : "未掛載";
         $("st-heap").textContent = fmtBytes(s.heapFree);
         $("st-uptime").textContent = fmtUptime(s.uptime);
+        if (typeof s.photoCount === "number" && !photosLoading) {
+          $("st-photos").textContent = s.photoCount + " 張";
+        }
         return s;
       })
       .catch(function () {
@@ -350,6 +606,403 @@
         throw new Error("offline");
       });
   }
+
+  /* ---------------------------------------------------------- views */
+  var views = { photos: $("view-photos"), ota: $("view-ota") };
+  var titles = {
+    photos: ["電子相片", "上傳圖檔，裝置會以全螢幕播放"],
+    ota: ["OTA 更新", "上傳 .bin 韌體，完成後自動重新啟動"]
+  };
+
+  function setView(name) {
+    if (!views[name]) name = "photos";
+    Object.keys(views).forEach(function (k) {
+      views[k].classList.toggle("hidden", k !== name);
+    });
+    document.querySelectorAll(".nav-item").forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-view") === name);
+    });
+    $("pageTitle").textContent = titles[name][0];
+    $("pageSub").textContent = titles[name][1];
+    if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+    if (name === "photos") loadPhotos();
+  }
+
+  document.querySelectorAll(".nav-item").forEach(function (btn) {
+    btn.addEventListener("click", function () { setView(btn.getAttribute("data-view")); });
+  });
+  window.addEventListener("hashchange", function () {
+    setView(location.hash.replace("#", ""));
+  });
+
+  /* ================================================================
+     電子相片
+     ================================================================ */
+  var W = 320;
+  var H = 170;
+  var queue = [];
+  var busy = false;
+  var photosLoading = false;
+
+  function setPhotoMsg(text, kind) {
+    var m = $("photoMsg");
+    m.textContent = text;
+    m.className = "msg" + (kind ? " " + kind : "");
+  }
+
+  function setPhotoProgress(pct) {
+    pct = Math.max(0, Math.min(100, Math.round(pct)));
+    $("photoBar").style.width = pct + "%";
+    $("photoPct").textContent = pct + "%";
+  }
+
+  function loadBitmap(file) {
+    if (window.createImageBitmap) {
+      return createImageBitmap(file, { imageOrientation: "from-image" })
+        .catch(function () { return createImageBitmap(file); });
+    }
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("decode")); };
+      img.src = url;
+    });
+  }
+
+  function preparePhoto(file) {
+    return loadBitmap(file).then(function (src) {
+      var canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      var ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, W, H);
+
+      var sw = src.width || src.naturalWidth || W;
+      var sh = src.height || src.naturalHeight || H;
+      var scale = Math.min(W / sw, H / sh);
+      var dw = Math.max(1, Math.round(sw * scale));
+      var dh = Math.max(1, Math.round(sh * scale));
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(src, Math.round((W - dw) / 2), Math.round((H - dh) / 2), dw, dh);
+      if (src.close) src.close();
+
+      return new Promise(function (resolve, reject) {
+        canvas.toBlob(function (blob) {
+          if (blob) resolve(blob);
+          else reject(new Error("encode"));
+        }, "image/jpeg", 0.86);
+      });
+    });
+  }
+
+  function addPhotos(list) {
+    if (busy) return;
+    var files = Array.prototype.slice.call(list || []);
+    if (!files.length) return;
+
+    setPhotoMsg("正在處理圖片…", "");
+    var jobs = files.map(function (f) {
+      if (!/^image\//.test(f.type) && !/\.(jpe?g|png)$/i.test(f.name)) {
+        return Promise.resolve(null);
+      }
+      return preparePhoto(f)
+        .then(function (blob) {
+          return {
+            blob: blob,
+            name: f.name.replace(/\.[^.]+$/, "") + ".jpg",
+            url: URL.createObjectURL(blob),
+            size: blob.size,
+            orig: f.size
+          };
+        })
+        .catch(function () { return null; });
+    });
+
+    Promise.all(jobs).then(function (items) {
+      var failed = 0;
+      var added = 0;
+      items.forEach(function (item) {
+        if (!item) { failed++; return; }
+        queue.push(item);
+        added++;
+      });
+      renderQueue();
+      if (added) {
+        setPhotoMsg("已加入 " + added + " 張，按「上傳」開始傳送。", "");
+      } else {
+        setPhotoMsg(failed ? "無法讀取圖片，請改用 JPG 或 PNG。" : "沒有可上傳的圖片。", "err");
+      }
+    });
+  }
+
+  function renderQueue() {
+    var box = $("queue");
+    box.innerHTML = "";
+    queue.forEach(function (item, idx) {
+      var row = document.createElement("div");
+      row.className = "q-item";
+
+      var img = document.createElement("img");
+      img.src = item.url;
+      img.alt = "";
+
+      var meta = document.createElement("div");
+      meta.className = "q-meta";
+      var name = document.createElement("div");
+      name.className = "q-name";
+      name.textContent = item.name;
+      var size = document.createElement("div");
+      size.className = "q-size";
+      size.textContent = fmtBytes(item.size) + " · 原始 " + fmtBytes(item.orig);
+      meta.appendChild(name);
+      meta.appendChild(size);
+
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "q-del";
+      del.textContent = "移除";
+      del.disabled = busy;
+      del.addEventListener("click", function () {
+        URL.revokeObjectURL(item.url);
+        queue.splice(idx, 1);
+        renderQueue();
+        if (!queue.length) {
+          $("photoBarWrap").classList.add("hidden");
+          setPhotoMsg("選擇圖片後會自動縮放為 320×170 再上傳。", "");
+        }
+      });
+
+      row.appendChild(img);
+      row.appendChild(meta);
+      row.appendChild(del);
+      box.appendChild(row);
+    });
+
+    var btn = $("photoUpload");
+    btn.disabled = busy || queue.length === 0;
+    btn.textContent = queue.length ? ("上傳 " + queue.length + " 張") : "上傳圖片";
+  }
+
+  function uploadQueue() {
+    if (busy || uploading || queue.length === 0) return;
+
+    busy = true;
+    var total = queue.length;
+    var index = 0;
+    var startedAt = Date.now();
+
+    $("photoBarWrap").classList.remove("hidden");
+    setPhotoProgress(0);
+    $("photoSpeed").textContent = "";
+
+    // OTA upload must not run at the same time.
+    uploading = true;
+    $("photoRefresh").disabled = true;
+    renderQueue();
+    setPhotoMsg("正在上傳相片，請勿關閉頁面…", "");
+
+    function finish() {
+      busy = false;
+      uploading = false;
+      $("photoRefresh").disabled = false;
+      $("photoSpeed").textContent = total + " 張 · " + fmtUptime((Date.now() - startedAt) / 1000);
+      setPhotoProgress(100);
+      setPhotoMsg("已上傳 " + total + " 張相片，裝置會自動載入。", "ok");
+      renderQueue();
+      loadPhotos();
+      refresh().catch(function () {});
+    }
+
+    function fail(message) {
+      busy = false;
+      uploading = false;
+      $("photoRefresh").disabled = false;
+      $("photoSpeed").textContent = "";
+      setPhotoMsg(message, "err");
+      renderQueue();
+    }
+
+    function next() {
+      if (queue.length === 0) { finish(); return; }
+
+      var item = queue[0];
+      var fd = new FormData();
+      fd.append("photo", item.blob, item.name);
+
+      var xhr = new XMLHttpRequest();
+      var t0 = Date.now();
+      xhr.open("POST", "/api/photos/upload", true);
+
+      xhr.upload.onprogress = function (e) {
+        if (!e.lengthComputable) return;
+        setPhotoProgress((index + e.loaded / e.total) / total * 100);
+        var sec = (Date.now() - t0) / 1000;
+        if (sec > 0.4) {
+          $("photoSpeed").textContent = (index + 1) + "/" + total + " · " + fmtBytes(e.loaded / sec) + "/s";
+        }
+      };
+
+      xhr.onload = function () {
+        var res = null;
+        try { res = JSON.parse(xhr.responseText); } catch (err) { /* ignore */ }
+        if (xhr.status === 200 && res && res.ok) {
+          URL.revokeObjectURL(item.url);
+          queue.shift();
+          index++;
+          renderQueue();
+          setPhotoProgress(index / total * 100);
+          next();
+        } else {
+          fail((res && res.message) || ("上傳失敗（HTTP " + xhr.status + "）"));
+        }
+      };
+
+      xhr.onerror = function () {
+        fail("連線中斷，請確認仍連線 AP TTGO-OTA-Setup 後重試。");
+        setBadge("offline", "離線");
+      };
+
+      xhr.send(fd);
+    }
+
+    next();
+  }
+
+  function photoCard(f) {
+    var fig = document.createElement("figure");
+    fig.className = "photo";
+
+    var img = document.createElement("img");
+    img.className = "thumb";
+    img.loading = "lazy";
+    img.alt = f.name;
+    img.src = "/photos/" + encodeURIComponent(f.name);
+
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "del";
+    del.title = "刪除相片";
+    del.textContent = "×";
+    del.addEventListener("click", function () {
+      if (!confirm("刪除相片 " + f.name + "？")) return;
+      del.disabled = true;
+      fetch("/api/photos/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body: "name=" + encodeURIComponent(f.name)
+      })
+        .then(function (r) {
+          return r.json().catch(function () { return {}; }).then(function (j) {
+            if (!r.ok || !j.ok) throw new Error(j.message || "刪除失敗");
+          });
+        })
+        .then(function () {
+          setPhotoMsg("已刪除相片。", "ok");
+          loadPhotos();
+          refresh().catch(function () {});
+        })
+        .catch(function (err) {
+          del.disabled = false;
+          setPhotoMsg(err.message || "刪除失敗", "err");
+        });
+    });
+
+    var cap = document.createElement("figcaption");
+    var name = document.createElement("span");
+    name.className = "pname";
+    name.textContent = f.name;
+    var size = document.createElement("span");
+    size.className = "psize";
+    size.textContent = fmtBytes(f.size);
+    cap.appendChild(name);
+    cap.appendChild(size);
+
+    fig.appendChild(img);
+    fig.appendChild(del);
+    fig.appendChild(cap);
+    return fig;
+  }
+
+  function loadPhotos() {
+    photosLoading = true;
+    return fetch("/api/photos", { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("photos " + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        $("photoCount").textContent = d.count + " 張";
+        $("st-photos").textContent = d.count + " 張";
+
+        var grid = $("photoGrid");
+        grid.innerHTML = "";
+        d.files.forEach(function (f) { grid.appendChild(photoCard(f)); });
+
+        $("photoEmpty").textContent = "尚無相片，請先上傳圖檔。";
+        $("photoEmpty").classList.toggle("hidden", d.count > 0);
+        if (d.fsTotal) {
+          $("photoUsage").textContent =
+            "SPIFFS 已用 " + fmtBytes(d.fsUsed) + " / " + fmtBytes(d.fsTotal) +
+            "，單張上限約 2 MB。";
+        }
+        return d;
+      })
+      .catch(function () {
+        $("photoEmpty").classList.remove("hidden");
+        $("photoEmpty").textContent = "無法取得相片清單，請確認裝置連線。";
+      })
+      .then(function () { photosLoading = false; });
+  }
+
+  var photoDrop = $("photoDrop");
+  var photoInput = $("photoInput");
+
+  photoDrop.addEventListener("click", function () {
+    if (!busy) photoInput.click();
+  });
+  photoDrop.addEventListener("keydown", function (e) {
+    if ((e.key === "Enter" || e.key === " ") && !busy) {
+      e.preventDefault();
+      photoInput.click();
+    }
+  });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    photoDrop.addEventListener(ev, function (e) {
+      e.preventDefault();
+      if (!busy) photoDrop.classList.add("over");
+    });
+  });
+  ["dragleave", "dragend", "drop"].forEach(function (ev) {
+    photoDrop.addEventListener(ev, function (e) {
+      e.preventDefault();
+      photoDrop.classList.remove("over");
+    });
+  });
+  photoDrop.addEventListener("drop", function (e) {
+    if (e.dataTransfer && e.dataTransfer.files.length) addPhotos(e.dataTransfer.files);
+  });
+  photoInput.addEventListener("change", function (e) {
+    addPhotos(e.target.files);
+    photoInput.value = "";
+  });
+  $("photoUpload").addEventListener("click", uploadQueue);
+  $("photoRefresh").addEventListener("click", function () {
+    setPhotoMsg("正在重新整理相片清單…", "");
+    loadPhotos().then(function (d) {
+      setPhotoMsg(d ? "相片清單已更新。" : "無法取得相片清單。", d ? "ok" : "err");
+    });
+  });
+
+  /* ================================================================
+     OTA 更新
+     ================================================================ */
+  var file = null;
+  var uploading = false;
+  var rebootTimer = null;
 
   function pickFile(f) {
     if (!f || uploading) return;
@@ -416,7 +1069,7 @@
   }
 
   function startUpload() {
-    if (!file || uploading) return;
+    if (!file || uploading || busy) return;
     uploading = true;
     setBadge("", "更新中");
     $("upload").disabled = true;
@@ -503,10 +1156,18 @@
   $("clear").addEventListener("click", clearFile);
   $("upload").addEventListener("click", startUpload);
 
+  /* ---------------------------------------------------------- boot */
+  setView(location.hash.replace("#", "") || "photos");
+  renderQueue();
   refresh().catch(function () {});
   setInterval(function () {
     if (!uploading) refresh().catch(function () {});
   }, 5000);
+  setInterval(function () {
+    if (!uploading && !photosLoading && !$("view-photos").classList.contains("hidden")) {
+      loadPhotos();
+    }
+  }, 30000);
 })();
 </script>
 </body>

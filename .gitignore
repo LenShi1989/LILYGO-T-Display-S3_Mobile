@@ -1,0 +1,10 @@
+# Arduino build output
+TDisplayS3_Menu/build/
+*.bin
+*.elf
+*.map
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/

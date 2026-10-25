@@ -1,8 +1,8 @@
 # LILYGO T-Display-S3 控制面板
 
-以 Arduino IDE 開發的 LILYGO T-Display-S3（ESP32-S3）多功能控制面板。使用 LovyanGFX 驅動 170x320 橫向 ST7789 顯示器，提供繁體中文選單、WiFi 設定、天氣、NTP 時鐘、股票報價與折線圖，並在右上角顯示 WiFi 與電池狀態。內建 AP + WiFi 用戶端共存模式，可透過瀏覽器進行 OTA 韌體更新。
+以 Arduino IDE 開發的 LILYGO T-Display-S3（ESP32-S3）多功能控制面板。使用 LovyanGFX 驅動 170x320 橫向 ST7789 顯示器，提供繁體中文選單、WiFi 設定、天氣、NTP 時鐘、股票報價與折線圖、電子相片播放，並在右上角顯示 WiFi 與電池狀態。內建 AP + WiFi 用戶端共存模式，可透過瀏覽器上傳相片與進行 OTA 韌體更新。
 
-目前軟體版本：`1.1.0`
+目前軟體版本：`1.2.0`
 
 ## 功能
 
@@ -15,6 +15,7 @@
 | 天氣 | Open-Meteo 即時天氣與今日高低溫 |
 | 時間 | NTP 網路對時，UTC+8 數字時鐘 |
 | 股票 | Yahoo Finance 報價與當日 5 分鐘折線圖 |
+| 電子相片 | 播放 SPIFFS 內的 JPG/PNG 相片，網頁可上傳與刪除 |
 | OTA更新 | AP 熱點、瀏覽器 OTA 韌體更新資訊 |
 
 ### 系統狀態
@@ -57,12 +58,25 @@
 - 台灣習慣紅漲綠跌。
 - 短按 P14 重新整理。
 
+### 電子相片
+
+- 主選單進入「電子相片」，提供「播放相片」與「相片資訊」兩個項目。
+- 相片儲存於 SPIFFS 的 `/photos/` 目錄，支援 JPG 與 PNG。
+- 播放頁以最大尺寸置中顯示相片（保留底部 17px 資訊列），不裁切影像。
+- 每 6 秒自動切換下一張；短按 P0 下一張、長按 P0 上一張。
+- 短按 P14 重新整理並重繪，長按 P14 返回選單。
+- 沒有相片時會顯示上傳網址 `http://192.168.4.1`。
+- 相片由 Web 控制台上傳，瀏覽器會先縮放為 320x170 JPEG（品質 0.86）再傳送，降低解碼負擔。
+- 單張上限 2MB，一次請求最多 8 張；裝置最多列出 64 張，實際數量受 SPIFFS 剩餘空間限制。
+- 播放頁直接使用 LovyanGFX 的 JPEG/PNG 解碼器串流繪製，不需額外解碼函式庫。
+
 ### OTA 更新
 
 - 開機即啟動 AP 熱點，SSID `TTGO-OTA-Setup`，免密碼（開放網路）。
 - AP 與 WiFi 用戶端（STA）共存，連線路由器時不影響熱點。
 - 熱點 IP 固定為 `192.168.4.1`，Web 伺服器監聽 80 埠。
 - `index.html` 儲存於 SPIFFS，由 `webServer` 讀取後回傳。
+- Web 控制台使用側邊欄切換「電子相片」與「OTA 更新」，手機版為頂端選單。
 - 前端支援拖放或選擇 `.bin`，顯示上傳進度、速度與裝置狀態。
 - 後端使用 ESP32 `Update` 函式庫寫入 OTA 分割區，完成後自動重新啟動。
 - OTA 只會寫入 app 分割區，不會更動 SPIFFS 內的 `index.html`。
@@ -90,7 +104,7 @@ LILYGO T-Display-S3/
    └─ 硬體腳位參考圖片
 ```
 
-主要程式集中於 `TDisplayS3_Menu/TDisplayS3_Menu.ino`。OTA 前端頁面為 `TDisplayS3_Menu/data/index.html`，需打包寫入 SPIFFS。中文使用 LovyanGFX 內建的 `efontTW_14` 與 `efontTW_16_b`。
+主要程式集中於 `TDisplayS3_Menu/TDisplayS3_Menu.ino`。Web 控制台頁面為 `TDisplayS3_Menu/data/index.html`，需打包寫入 SPIFFS。裝置執行時會在 SPIFFS 建立 `/photos/` 目錄存放上傳的相片。中文使用 LovyanGFX 內建的 `efontTW_14` 與 `efontTW_16_b`。
 
 `TDisplayS3_Menu/partitions.csv` 會覆寫開發板預設分割表，提供兩個 3MB OTA 分割區與約 9.9MB SPIFFS：
 
@@ -185,8 +199,8 @@ LILYGO T-Display-S3/
 目前編譯結果：
 
 ```text
-Sketch 使用 2294363 位元組（72%）的程式儲存空間。最大為 3145728 位元組
-全域變數使用 52040 位元組 (15%) 的動態記憶體，保留 275640 位元組給區域變數。最大 327680 位元組
+Sketch 使用 2324627 位元組（73%）的程式儲存空間。最大為 3145728 位元組
+全域變數使用 53536 位元組 (16%) 的動態記憶體，保留 274144 位元組給區域變數。最大 327680 位元組
 ```
 
 ### 上傳 SPIFFS 頁面
@@ -205,7 +219,7 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 ```
 
 - `mkspiffs` 與 `esptool` 的版本目錄可能不同，請依 `%LOCALAPPDATA%\Arduino15\packages\esp32\tools\` 實際路徑調整。
-- 燒錄後開啟 `http://192.168.4.1` 應可看到 OTA 頁面。
+- 燒錄後開啟 `http://192.168.4.1` 應可看到 Web 控制台頁面。
 - 若頁面顯示「SPIFFS 未就緒」，代表 `/index.html` 不存在或分割表不符。
 - 之後更新 `data/index.html` 只需重新打包 SPIFFS，不需要重新上傳主程式。
 
@@ -231,7 +245,9 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 | 時鐘 | 無作用 | 長按返回 |
 | 股票報價/走勢 | 無作用 | 短按更新；長按返回 |
 | 顯示器 | 切換亮度 | 長按返回 |
-| WiFi 資訊/系統資訊 | 無作用 | 長按返回 |
+| WiFi 資訊/系統資訊/相片資訊 | 無作用 | 長按返回 |
+| 電子相片選單 | 下一項 | 短按進入；長按回主選單 |
+| 相片播放 | 下一張/上一張 | 短按重繪；長按返回 |
 | OTA 更新 | 無作用 | 短按重新整理；長按返回 |
 | 清除設定 | 切換是/否 | 短按確認；長按返回 |
 
@@ -246,27 +262,41 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 - 輸入密碼時以 `*` 遮蔽。
 - 密碼輸入完成後按 `OK` 開始連線。
 
-## OTA 網頁更新
+## Web 控制台
 
 ### 連線方式
 
 1. 手機或電腦連線 WiFi `TTGO-OTA-Setup`（開放網路，無密碼）。
 2. 瀏覽器開啟 `http://192.168.4.1`。
-3. 若裝置同時連上路由器，也可使用裝置的 STA IP 開啟同一頁面。
-4. 部分手機會因熱點沒有網際網路而自動改用行動網路，請關閉行動網路或選擇「維持連線」。
+3. 左側側邊欄切換「電子相片」與「OTA 更新」；手機版顯示於頂端。
+4. 若裝置同時連上路由器，也可使用裝置的 STA IP 開啟同一頁面。
+5. 部分手機會因熱點沒有網際網路而自動改用行動網路，請關閉行動網路或選擇「維持連線」。
 
 ### 後端 API
 
 | 路徑 | 方法 | 說明 |
 | --- | --- | --- |
 | `/`、`/index.html` | GET | 從 SPIFFS 讀取 `index.html` |
-| `/api/status` | GET | 韌體版本、AP/STA、記憶體、SPIFFS 與運作時間 |
+| `/api/status` | GET | 韌體版本、AP/STA、記憶體、SPIFFS、相片張數與運作時間 |
+| `/api/photos` | GET | 相片清單、張數與 SPIFFS 使用量 |
+| `/api/photos/upload` | POST | 接收 JPG/PNG（multipart）並寫入 `/photos/` |
+| `/api/photos/delete` | POST | 以 `name` 表單參數刪除相片 |
+| `/photos/<name>` | GET | 讀取相片檔，供網頁預覽 |
 | `/update` | POST | 接收 `.bin` 並寫入 OTA 分割區，完成後重啟 |
 
 - `/update` 使用 `multipart/form-data`，前端以 `X-File-Size` 標頭提供檔案大小以計算進度。
 - 後端依序呼叫 `Update.begin()`、`Update.write()`、`Update.end(true)`。
 - 更新成功回傳 `{"ok":true}` 後約 1.2 秒重新啟動。
 - 更新失敗回傳 HTTP 500 與錯誤訊息，裝置維持原韌體。
+- 相片上傳會檢查副檔名（JPG/PNG）、單張 2MB 上限與 SPIFFS 剩餘空間；失敗時刪除半成品檔。
+
+### 相片上傳流程
+
+1. 於「電子相片 → 上傳圖檔」拖放或選擇 JPG/PNG，可一次多選。
+2. 瀏覽器以 Canvas 縮放為 320x170、黑底置中，轉成 JPEG 後排入佇列。
+3. 按「上傳 N 張」，逐張 POST 至 `/api/photos/upload`，並顯示整體進度與速度。
+4. 後端驗證後寫入 SPIFFS `/photos/`，成功即重新整理相片庫。
+5. 裝置端短按 P14 重新整理，即可在「播放相片」看到新內容。
 
 ### 更新流程
 
@@ -297,7 +327,7 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 | Open-Meteo | `https://api.open-meteo.com/v1/forecast` | 即時天氣與每日高低溫 |
 | Yahoo Finance | `https://query1.finance.yahoo.com/v8/finance/chart/{symbol}` | 股票報價與 5 分鐘走勢 |
 | NTP | `pool.ntp.org`、`time.google.com`、`time.cloudflare.com` | 網路對時 |
-| OTA Web | `http://192.168.4.1` | SPIFFS 頁面與韌體更新 |
+| Web 控制台 | `http://192.168.4.1` | 相片上傳與韌體更新 |
 
 - WiFi 模式為 `WIFI_AP_STA`，AP 與 STA 同時運作。
 - AP SSID `TTGO-OTA-Setup` 為開放網路，最多 4 個連線。
@@ -327,6 +357,8 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 - `Preferences`：讀寫 NVS 設定。
 - `spiffsReady`、`otaRunning`、`otaProgress`、`otaTotalSize`、`otaStatus`：SPIFFS 與 OTA 狀態。
 - `webServer`：80 埠 HTTP 伺服器。
+- `photoNames`、`photoSizes`、`photoCount`、`photoIdx`：SPIFFS 相片清單與播放索引。
+- `photoUpload*`：上傳中的檔名、大小、錯誤訊息與已儲存清單。
 
 ### 按鍵
 
@@ -357,6 +389,9 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 │  ├─ 股票查詢
 │  ├─ 折線圖
 │  └─ 更改代號 → 鍵盤
+├─ 電子相片
+│  ├─ 播放相片
+│  └─ 相片資訊
 └─ OTA更新
 ```
 
@@ -385,15 +420,22 @@ setup()
   ├─ initFileSystem()   → SPIFFS.begin(true)
   └─ setupWebServer()   → /
                           /api/status
+                          /api/photos
+                          /api/photos/upload
+                          /api/photos/delete
+                          /photos/<name>
                           /update
 
 loop()
-  └─ webServer.handleClient()
-       └─ handleUpdateUpload() → Update.begin/write/end → ESP.restart()
+  ├─ webServer.handleClient()
+  │    ├─ handlePhotoUpload() → 寫入 SPIFFS /photos/
+  │    └─ handleUpdateUpload() → Update.begin/write/end → ESP.restart()
+  └─ 相片播放：每 6 秒自動換下一張
 ```
 
 - `handleRoot()` 以 `streamFile()` 從 SPIFFS 回傳 `index.html`，缺少檔案時回傳提示頁。
-- `handleStatus()` 以 JSON 回傳版本、AP/STA、記憶體與 SPIFFS 資訊。
+- `handleStatus()` 以 JSON 回傳版本、AP/STA、記憶體、SPIFFS 與相片張數。
+- `handlePhotoList()`、`handlePhotoUpload()`、`handlePhotoDelete()`、`handlePhotoFile()` 提供相片清單、上傳、刪除與檔案讀取。
 - `handleUpdateUpload()` 依 `UPLOAD_FILE_START/WRITE/END/ABORTED` 狀態寫入韌體。
 - `handleUpdateDone()` 檢查 `Update.hasError()`，成功時延遲重啟。
 - 上傳期間 `handleInput()` 直接返回，避免按鍵操作干擾寫入。
@@ -406,6 +448,7 @@ loop()
 - `drawMenuScreen()`：通用選單與捲動軸。
 - `drawWeatherScreen()`、`drawClockScreen()`、`drawStockQuoteScreen()`、`drawStockChartScreen()`：各功能頁。
 - `drawOtaScreen()`：AP 資訊、韌體版本與 OTA 進度。
+- `drawPhotoView()`、`photoStep()`、`drawPhotoEmpty()`、`drawPhotoInfo()`：相片播放、換頁與資訊頁。
 - `drawKeyboard()`：螢幕鍵盤。
 - `drawBusy()`、`showToast()`：載入與提示訊息。
 
@@ -413,14 +456,15 @@ loop()
 
 `loop()` 每次執行：
 
-1. 呼叫 `webServer.handleClient()` 處理 HTTP 與 OTA 上傳。
+1. 呼叫 `webServer.handleClient()` 處理 HTTP、相片上傳與 OTA 上傳。
 2. 輪詢兩個按鍵並處理輸入。
 3. 更新 WiFi 連線狀態。
 4. 連線成功時啟動 NTP。
 5. 每 15 秒更新電池。
-6. 每秒更新狀態圖示。
+6. 每秒更新狀態圖示（相片播放頁不重繪，避免蓋住照片）。
 7. 時鐘頁面每秒更新時間。
-8. 短暫延遲 5ms。
+8. 相片播放頁每 6 秒自動切換下一張。
+9. 短暫延遲 5ms。
 
 ## 疑難排解
 
@@ -457,6 +501,14 @@ loop()
 - 確認已連線 `TTGO-OTA-Setup`，網址為 `http://192.168.4.1`（不要使用 `https://`）。
 - 手機若自動切換行動網路，請關閉行動數據或選擇「維持連線」。
 - 若畫面顯示「SPIFFS 未就緒」，請依「上傳 SPIFFS 頁面」章節重新打包並燒錄 `data/`。
+
+### 相片無法播放
+
+- 確認 `/photos/` 內有檔案，可於 Web 控制台「相片庫」查看。
+- 只支援 JPG 與 PNG，其他格式（例如 HEIC、WebP）請先轉檔。
+- 若顯示「無法解碼此圖片」，可能是檔案損毀或使用不支援的漸進式 JPEG。
+- 圖片過大時解碼會變慢；建議透過網頁上傳，瀏覽器會自動縮放為 320x170。
+- SPIFFS 空間不足時上傳會失敗，請先刪除不需要的相片。
 
 ### OTA 更新失敗
 
@@ -513,6 +565,8 @@ loop()
 - WiFi 帳密以明文儲存在 NVS，請勿在共用設備上使用重要帳密。
 - OTA AP 為開放網路且無驗證，任何在範圍內的人都能開啟更新頁面，請僅在受信任環境使用。
 - OTA 更新期間請保持供電，避免寫入中斷。
+- 相片儲存在 SPIFFS，重新上傳主程式不會清除；但整片燒錄 SPIFFS 映像會覆蓋相片。
+- 播放相片時若同時上傳大檔，畫面可能短暫停頓，屬正常現象。
 - `setInsecure()` 不驗證 TLS 憑證，僅適合個人裝置與受信任網路。
 - Yahoo Finance API 非官方公開 API，長期可用性不受保證。
 - 股票資料可能延遲，僅供參考，不構成投資建議。

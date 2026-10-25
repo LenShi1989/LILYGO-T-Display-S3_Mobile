@@ -1,6 +1,6 @@
 /*
  * LILYGO T-Display-S3 控制面板
- * 軟體版本：1.1.0
+ * 軟體版本：1.2.0
  * Arduino IDE：2.3.10
  * Arduino CLI：1.5.1
  * ESP32 Arduino Core：3.3.12
@@ -11,6 +11,11 @@
  * - ArduinoJson 7.4.2
  *
  * 注意：本專案不使用 TFT_eSPI，無需安裝或設定。
+ *
+ * 1.2.0 新增：
+ * - 主選單「電子相片」，可全螢幕播放 SPIFFS 內的 JPG/PNG 相片。
+ * - Web 控制台改為側邊欄，提供相片上傳/刪除與 OTA 更新。
+ * - 後端新增相片上傳、清單、刪除與檔案讀取 API。
  */
 
 #include <Arduino.h>
@@ -97,9 +102,16 @@ static constexpr int ROW_H = 23;
 static constexpr int MAX_SCAN = 24;
 static constexpr int MAX_POINTS = 120;
 
-static constexpr const char* FW_VERSION = "1.1.0";
+static constexpr const char* FW_VERSION = "1.2.0";
 static constexpr const char* AP_SSID = "TTGO-OTA-Setup";
 static constexpr uint32_t OTA_REBOOT_DELAY_MS = 1200;
+
+static constexpr const char* PHOTO_DIR = "/photos";
+static constexpr int MAX_PHOTOS = 64;
+static constexpr int MAX_UPLOAD_FILES = 8;
+static constexpr uint32_t PHOTO_SLIDE_MS = 6000;
+static constexpr size_t MAX_PHOTO_BYTES = 2 * 1024 * 1024;
+static constexpr size_t PHOTO_MIN_FREE = 16384;
 
 static constexpr uint8_t PIN_BTN_NEXT = 0;
 static constexpr uint8_t PIN_BTN_OK = 14;
@@ -149,6 +161,9 @@ enum Screen : uint8_t {
   SCR_CLOCK,
   SCR_STOCK_QUOTE,
   SCR_STOCK_CHART,
+  SCR_PHOTO_MENU,
+  SCR_PHOTO_VIEW,
+  SCR_PHOTO_INFO,
   SCR_OTA
 };
 
@@ -233,6 +248,7 @@ static const char* const MAIN_ITEMS[] = {
   "天氣",
   "時間",
   "股票",
+  "電子相片",
   "OTA更新"
 };
 
@@ -252,6 +268,11 @@ static const char* const STOCK_ITEMS[] = {
   "股票查詢",
   "折線圖",
   "更改代號"
+};
+
+static const char* const PHOTO_ITEMS[] = {
+  "播放相片",
+  "相片資訊"
 };
 
 static const char* const KB_KEYS[5][10] = {
@@ -291,6 +312,24 @@ bool otaSuccess = false;
 uint8_t otaProgress = 0;
 size_t otaTotalSize = 0;
 String otaStatus = "待機";
+
+String photoNames[MAX_PHOTOS];
+size_t photoSizes[MAX_PHOTOS];
+int photoCount = 0;
+int photoIdx = 0;
+uint32_t photoLastMs = 0;
+
+File photoUploadFile;
+String photoUploadCurrent;
+bool photoUploadOpen = false;
+bool photoUploadFailed = false;
+bool photoUploadNewRequest = true;
+size_t photoUploadBytes = 0;
+size_t photoUploadFree = 0;
+String photoUploadError;
+String photoUploadSaved[MAX_UPLOAD_FILES];
+int photoUploadSavedCount = 0;
+uint32_t photoNameSeq = 0;
 
 WebServer webServer(80);
 
@@ -431,9 +470,9 @@ void loadConfig() {
   cfgSsid = prefs.getString("ssid", "");
   cfgPass = prefs.getString("pass", "");
   cfgSymbol = prefs.getString("sym", "2330.TW");
-  cfgLat = prefs.getString("lat", "25.0330");
-  cfgLon = prefs.getString("lon", "121.5654");
-  cfgCity = prefs.getString("city", "台北");
+  cfgLat = prefs.getString("lat", "24.9160");
+  cfgLon = prefs.getString("lon", "121.2536");
+  cfgCity = prefs.getString("city", "桃園平鎮區");
   prefs.end();
 }
 
@@ -485,6 +524,133 @@ bool initFileSystem() {
     Serial.println("[SPIFFS] mount failed");
   }
   return spiffsReady;
+}
+
+String fmtBytes(size_t bytes) {
+  char buf[24];
+  if (bytes >= 1048576UL) snprintf(buf, sizeof(buf), "%.1f MB", bytes / 1048576.0);
+  else if (bytes >= 1024UL) snprintf(buf, sizeof(buf), "%.0f KB", bytes / 1024.0);
+  else snprintf(buf, sizeof(buf), "%u B", (unsigned)bytes);
+  return String(buf);
+}
+
+bool isPhotoFile(const String& name) {
+  String low = name;
+  low.toLowerCase();
+  return low.endsWith(".jpg") || low.endsWith(".jpeg") || low.endsWith(".png");
+}
+
+String photoBaseName(const String& raw) {
+  String base = raw;
+  int cut = base.lastIndexOf('/');
+  int cut2 = base.lastIndexOf('\\');
+  if (cut2 > cut) cut = cut2;
+  if (cut >= 0) base = base.substring(cut + 1);
+
+  String clean;
+  clean.reserve(base.length());
+  for (size_t i = 0; i < base.length() && clean.length() < 40; i++) {
+    char c = base[i];
+    if (isalnum((uint8_t)c) || c == '.' || c == '-' || c == '_') {
+      clean += (char)tolower((uint8_t)c);
+    } else {
+      clean += '_';
+    }
+  }
+  while (clean.startsWith(".")) clean.remove(0, 1);
+  if (clean.length() == 0) return "";
+  if (!isPhotoFile(clean)) return "";
+  return clean;
+}
+
+void refreshPhotoList() {
+  photoCount = 0;
+  if (!spiffsReady) return;
+
+  File dir = SPIFFS.open(PHOTO_DIR, "r");
+  if (!dir || !dir.isDirectory()) {
+    if (dir) dir.close();
+    return;
+  }
+
+  File entry = dir.openNextFile();
+  while (entry && photoCount < MAX_PHOTOS) {
+    if (!entry.isDirectory()) {
+      String name = entry.name();
+      int cut = name.lastIndexOf('/');
+      if (cut >= 0) name = name.substring(cut + 1);
+      if (isPhotoFile(name)) {
+        photoNames[photoCount] = name;
+        photoSizes[photoCount] = entry.size();
+        photoCount++;
+      }
+    }
+    entry.close();
+    entry = dir.openNextFile();
+  }
+  dir.close();
+
+  for (int i = 1; i < photoCount; i++) {
+    String key = photoNames[i];
+    size_t size = photoSizes[i];
+    int j = i - 1;
+    while (j >= 0 && photoNames[j] > key) {
+      photoNames[j + 1] = photoNames[j];
+      photoSizes[j + 1] = photoSizes[j];
+      j--;
+    }
+    photoNames[j + 1] = key;
+    photoSizes[j + 1] = size;
+  }
+  if (photoIdx >= photoCount) photoIdx = 0;
+}
+
+String makePhotoFileName(const String& original) {
+  String base = photoBaseName(original);
+  if (base.length() == 0) base = "photo.jpg";
+
+  String stem = base;
+  String ext = ".jpg";
+  int dot = base.lastIndexOf('.');
+  if (dot > 0) {
+    stem = base.substring(0, dot);
+    ext = base.substring(dot);
+  }
+  // SPIFFS 檔名（含 /photos/ 路徑）上限約 31 字元，主檔名需保持精簡。
+  if (stem.length() > 10) stem.remove(10);
+  if (stem.length() == 0) stem = "photo";
+
+  String name;
+  do {
+    name = "p" + String(photoNameSeq++) + "_" + stem + ext;
+  } while (photoNameSeq < 10000 && SPIFFS.exists(String(PHOTO_DIR) + "/" + name));
+  return name;
+}
+
+// 底部保留 17px 給資訊列，相片以 contain 方式置中，不會被裁掉。
+static constexpr int PHOTO_VIEW_H = SCREEN_H - 17;
+
+bool drawPhotoFile(int idx) {
+  if (!spiffsReady || idx < 0 || idx >= photoCount) return false;
+  String name = photoNames[idx];
+  String path = String(PHOTO_DIR) + "/" + name;
+  String low = name;
+  low.toLowerCase();
+  if (low.endsWith(".png")) {
+    return lcd.drawPngFile(SPIFFS, path, 0, 0, SCREEN_W, PHOTO_VIEW_H, 0, 0, 0.0f, 0.0f, datum_t::middle_center);
+  }
+  return lcd.drawJpgFile(SPIFFS, path, 0, 0, SCREEN_W, PHOTO_VIEW_H, 0, 0, 0.0f, 0.0f, datum_t::middle_center);
+}
+
+void dropPhotoUpload(bool removePartial) {
+  if (photoUploadOpen) {
+    photoUploadFile.close();
+    photoUploadOpen = false;
+  }
+  if (removePartial && photoUploadCurrent.length()) {
+    SPIFFS.remove(String(PHOTO_DIR) + "/" + photoUploadCurrent);
+  }
+  photoUploadCurrent = "";
 }
 
 void startAccessPoint() {
@@ -544,13 +710,232 @@ void handleStatus() {
   json += "\"fsReady\":" + String(spiffsReady ? "true" : "false") + ',';
   json += "\"fsTotal\":" + String(spiffsReady ? (unsigned)SPIFFS.totalBytes() : 0) + ',';
   json += "\"fsUsed\":" + String(spiffsReady ? (unsigned)SPIFFS.usedBytes() : 0) + ',';
+  json += "\"photoCount\":" + String(photoCount) + ',';
   json += "\"otaRunning\":" + String(otaRunning ? "true" : "false");
   json += '}';
   webServer.sendHeader("Cache-Control", "no-store");
   webServer.send(200, "application/json; charset=utf-8", json);
 }
 
+
+void handlePhotoList() {
+  refreshPhotoList();
+  String json;
+  json.reserve(160 + photoCount * 72);
+  json += '{';
+  json += "\"count\":";
+  json += String(photoCount);
+  json += ',';
+  json += "\"fsTotal\":";
+  json += String(spiffsReady ? (unsigned)SPIFFS.totalBytes() : 0);
+  json += ',';
+  json += "\"fsUsed\":";
+  json += String(spiffsReady ? (unsigned)SPIFFS.usedBytes() : 0);
+  json += ',';
+  json += "\"files\":[";
+  for (int i = 0; i < photoCount; i++) {
+    if (i) json += ',';
+    json += "{\"name\":";
+    json += jsonQuote(photoNames[i]);
+    json += ",\"size\":";
+    json += String((unsigned)photoSizes[i]);
+    json += '}';
+  }
+  json += "]}";
+  webServer.sendHeader("Cache-Control", "no-store");
+  webServer.send(200, "application/json; charset=utf-8", json);
+}
+
+void handlePhotoUpload() {
+  HTTPUpload& up = webServer.upload();
+
+  if (up.status == UPLOAD_FILE_START) {
+    // 只在每個請求的第一個檔案重置狀態，避免同一請求的多檔上傳遺失已存清單。
+    if (photoUploadNewRequest) {
+      photoUploadNewRequest = false;
+      photoUploadFailed = false;
+      photoUploadError = "";
+      photoUploadSavedCount = 0;
+    }
+    photoUploadBytes = 0;
+    photoUploadCurrent = "";
+    if (photoUploadFailed) return;
+    if (!spiffsReady) {
+      photoUploadFailed = true;
+      photoUploadError = "SPIFFS 未就緒";
+      return;
+    }
+    if (photoUploadSavedCount >= MAX_UPLOAD_FILES) {
+      photoUploadFailed = true;
+      photoUploadError = "一次最多上傳 8 張相片";
+      return;
+    }
+
+    String saved = makePhotoFileName(up.filename);
+    if (saved.length() == 0) {
+      photoUploadFailed = true;
+      photoUploadError = "只接受 JPG 或 PNG 圖檔";
+      return;
+    }
+    if (!SPIFFS.exists(PHOTO_DIR)) SPIFFS.mkdir(PHOTO_DIR);
+
+    size_t total = SPIFFS.totalBytes();
+    size_t used = SPIFFS.usedBytes();
+    photoUploadFree = (total > used) ? (total - used) : 0;
+    if (photoUploadFree < PHOTO_MIN_FREE) {
+      photoUploadFailed = true;
+      photoUploadError = "SPIFFS 空間不足";
+      return;
+    }
+
+    photoUploadCurrent = saved;
+    String path = String(PHOTO_DIR) + "/" + saved;
+    photoUploadFile = SPIFFS.open(path, "w");
+    if (!photoUploadFile) {
+      photoUploadFailed = true;
+      photoUploadError = "無法建立檔案";
+      photoUploadCurrent = "";
+      return;
+    }
+    photoUploadOpen = true;
+    Serial.printf("[PHOTO] start %s\n", path.c_str());
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (photoUploadFailed || !photoUploadOpen) return;
+
+    size_t limit = MAX_PHOTO_BYTES;
+    if (photoUploadFree > PHOTO_MIN_FREE && photoUploadFree - PHOTO_MIN_FREE < limit) {
+      limit = photoUploadFree - PHOTO_MIN_FREE;
+    }
+    if (photoUploadBytes + up.currentSize > limit) {
+      photoUploadFailed = true;
+      photoUploadError = "圖檔過大或空間不足";
+      dropPhotoUpload(true);
+      return;
+    }
+
+    size_t written = photoUploadFile.write(up.buf, up.currentSize);
+    if (written != up.currentSize) {
+      photoUploadFailed = true;
+      photoUploadError = "寫入 SPIFFS 失敗";
+      dropPhotoUpload(true);
+      return;
+    }
+    photoUploadBytes += written;
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (photoUploadFailed) return;
+    if (photoUploadOpen) {
+      photoUploadFile.close();
+      photoUploadOpen = false;
+    }
+    if (photoUploadBytes == 0) {
+      if (photoUploadCurrent.length()) SPIFFS.remove(String(PHOTO_DIR) + "/" + photoUploadCurrent);
+      photoUploadCurrent = "";
+      photoUploadFailed = true;
+      photoUploadError = "收到空檔案";
+      return;
+    }
+    if (photoUploadSavedCount < MAX_UPLOAD_FILES) {
+      photoUploadSaved[photoUploadSavedCount++] = photoUploadCurrent;
+      Serial.printf("[PHOTO] saved %s (%u bytes)\n",
+                    photoUploadCurrent.c_str(), (unsigned)photoUploadBytes);
+    }
+    photoUploadCurrent = "";
+    photoUploadBytes = 0;
+  } else if (up.status == UPLOAD_FILE_ABORTED) {
+    photoUploadFailed = true;
+    photoUploadError = "上傳中斷";
+    photoUploadNewRequest = true;
+    dropPhotoUpload(true);
+  }
+}
+
+void handlePhotoUploadDone() {
+  bool ok = (!photoUploadFailed && photoUploadSavedCount > 0);
+  refreshPhotoList();
+
+  webServer.sendHeader("Connection", "close");
+  webServer.sendHeader("Cache-Control", "no-store");
+  if (ok) {
+    String json = "{\"ok\":true,\"saved\":" + String(photoUploadSavedCount);
+    json += ",\"count\":" + String(photoCount) + ",\"files\":[";
+    for (int i = 0; i < photoUploadSavedCount; i++) {
+      if (i) json += ',';
+      json += jsonQuote(photoUploadSaved[i]);
+    }
+    json += "]}";
+    webServer.send(200, "application/json; charset=utf-8", json);
+  } else {
+    if (photoUploadError.length() == 0) photoUploadError = "沒有收到圖片資料";
+    String json = "{\"ok\":false,\"message\":" + jsonQuote(photoUploadError) + "}";
+    webServer.send(500, "application/json; charset=utf-8", json);
+  }
+
+  photoUploadSavedCount = 0;
+  photoUploadFailed = false;
+  photoUploadError = "";
+  photoUploadBytes = 0;
+  photoUploadFree = 0;
+  photoUploadCurrent = "";
+  photoUploadNewRequest = true;
+}
+
+void handlePhotoDelete() {
+  String name = webServer.arg("name");
+  int cut = name.lastIndexOf('/');
+  if (cut >= 0) name = name.substring(cut + 1);
+
+  bool ok = false;
+  if (spiffsReady && name.length() && name.indexOf("..") < 0 && photoBaseName(name) == name) {
+    String path = String(PHOTO_DIR) + "/" + name;
+    if (SPIFFS.exists(path)) ok = SPIFFS.remove(path);
+    if (ok) Serial.printf("[PHOTO] deleted %s\n", path.c_str());
+  }
+  refreshPhotoList();
+
+  webServer.sendHeader("Cache-Control", "no-store");
+  if (ok) {
+    String json = "{\"ok\":true,\"count\":" + String(photoCount) + "}";
+    webServer.send(200, "application/json; charset=utf-8", json);
+  } else {
+    webServer.send(404, "application/json; charset=utf-8",
+                   "{\"ok\":false,\"message\":\"找不到相片\"}");
+  }
+}
+
+void handlePhotoFile() {
+  String uri = webServer.uri();
+  String name = uri.substring(String("/photos/").length());
+  if (name.indexOf('?') >= 0) name = name.substring(0, name.indexOf('?'));
+
+  if (name.length() == 0 || name.indexOf('/') >= 0 || name.indexOf("..") >= 0 ||
+      photoBaseName(name) != name) {
+    webServer.send(404, "text/plain; charset=utf-8", "Not Found");
+    return;
+  }
+
+  String path = String(PHOTO_DIR) + "/" + name;
+  if (!spiffsReady || !SPIFFS.exists(path)) {
+    webServer.send(404, "text/plain; charset=utf-8", "Not Found");
+    return;
+  }
+  File file = SPIFFS.open(path, "r");
+  if (!file) {
+    webServer.send(404, "text/plain; charset=utf-8", "Not Found");
+    return;
+  }
+  String low = name;
+  low.toLowerCase();
+  const char* type = low.endsWith(".png") ? "image/png" : "image/jpeg";
+  webServer.sendHeader("Cache-Control", "public, max-age=600");
+  webServer.streamFile(file, type);
+  file.close();
+}
+
 void handleNotFound() {
+  if (webServer.uri().startsWith("/photos/")) {
+    handlePhotoFile();
+    return;
+  }
   webServer.send(404, "text/plain; charset=utf-8", "Not Found");
 }
 
@@ -649,6 +1034,9 @@ void setupWebServer() {
   webServer.on("/", HTTP_GET, handleRoot);
   webServer.on("/index.html", HTTP_GET, handleRoot);
   webServer.on("/api/status", HTTP_GET, handleStatus);
+  webServer.on("/api/photos", HTTP_GET, handlePhotoList);
+  webServer.on("/api/photos/upload", HTTP_POST, handlePhotoUploadDone, handlePhotoUpload);
+  webServer.on("/api/photos/delete", HTTP_POST, handlePhotoDelete);
   webServer.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
   webServer.on("/favicon.ico", HTTP_GET, []() { webServer.send(204); });
   webServer.onNotFound(handleNotFound);
@@ -820,10 +1208,22 @@ void showStockMenu() {
   drawMenuScreen();
 }
 
+void showPhotoMenu() {
+  refreshPhotoList();
+  screen = SCR_PHOTO_MENU;
+  menu.title = "電子相片";
+  menu.items = PHOTO_ITEMS;
+  menu.count = sizeof(PHOTO_ITEMS) / sizeof(PHOTO_ITEMS[0]);
+  menu.sel = 0;
+  menu.top = 0;
+  drawMenuScreen();
+}
+
 void goBack() {
   if (returnScreen == SCR_SYS_MENU) showSysMenu();
   else if (returnScreen == SCR_WIFI_MENU) showWifiMenu();
   else if (returnScreen == SCR_STOCK_MENU) showStockMenu();
+  else if (returnScreen == SCR_PHOTO_MENU) showPhotoMenu();
   else showMainMenu();
 }
 
@@ -1251,6 +1651,105 @@ void drawOtaScreen() {
   lcd.drawString("瀏覽器開啟網址即可更新", 160, 143);
 }
 
+void drawPhotoEmpty() {
+  lcd.fillScreen(C_BG);
+  drawHeader("電子相片");
+  drawFooter("P14:重新整理 長按:返回");
+
+  lcd.setFont(&fonts::efontTW_16_b);
+  lcd.setTextSize(1.0f, 1.0f);
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setTextColor(C_TEXT, C_BG);
+  lcd.drawString("尚無相片", 160, 58);
+
+  lcd.setFont(&fonts::efontTW_14);
+  lcd.setTextColor(C_MUTED, C_BG);
+  lcd.drawString("開啟下列網址上傳圖檔", 160, 86);
+  lcd.setTextColor(C_ACCENT2, C_BG);
+  lcd.drawString("http://" + WiFi.softAPIP().toString(), 160, 110);
+}
+
+void drawPhotoView() {
+  if (photoCount == 0) {
+    drawPhotoEmpty();
+    photoLastMs = millis();
+    return;
+  }
+
+  lcd.fillScreen(C_BG);
+  bool ok = drawPhotoFile(photoIdx);
+  if (!ok) {
+    lcd.setFont(&fonts::efontTW_16_b);
+    lcd.setTextSize(1.0f, 1.0f);
+    lcd.setTextDatum(textdatum_t::middle_center);
+    lcd.setTextColor(C_RED, C_BG);
+    lcd.drawString("無法解碼此圖片", 160, 70);
+    lcd.setFont(&fonts::efontTW_14);
+    lcd.setTextColor(C_MUTED, C_BG);
+    lcd.drawString(fitText(photoNames[photoIdx], 280, &fonts::efontTW_14), 160, 98);
+  }
+
+  int barY = SCREEN_H - 17;
+  lcd.fillRect(0, barY, SCREEN_W, 17, C_CARD);
+  lcd.drawFastHLine(0, barY, SCREEN_W, C_LINE);
+  lcd.setFont(&fonts::efontTW_14);
+  lcd.setTextSize(1.0f, 1.0f);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setTextColor(C_ACCENT, C_CARD);
+  lcd.drawString(String(photoIdx + 1) + "/" + String(photoCount), 8, barY + 8);
+  lcd.setTextDatum(textdatum_t::middle_right);
+  lcd.setTextColor(C_MUTED, C_CARD);
+  lcd.drawString("P0:切換  P14長按:返回", 312, barY + 8);
+
+  photoLastMs = millis();
+}
+
+void photoStep(int dir) {
+  if (photoCount == 0) return;
+  int n = photoCount;
+  int s = (photoIdx + dir) % n;
+  if (s < 0) s += n;
+  photoIdx = s;
+  drawPhotoView();
+}
+
+void drawPhotoInfo() {
+  lcd.fillScreen(C_BG);
+  drawHeader("相片資訊");
+  drawFooter("長按 P14 返回");
+
+  size_t photoBytes = 0;
+  for (int i = 0; i < photoCount; i++) photoBytes += photoSizes[i];
+  size_t total = spiffsReady ? SPIFFS.totalBytes() : 0;
+  size_t used = spiffsReady ? SPIFFS.usedBytes() : 0;
+
+  const char* labels[5] = {"相片數量", "相片容量", "已用空間", "剩餘空間", "上傳網址"};
+  String values[5] = {
+    String(photoCount) + " 張",
+    fmtBytes(photoBytes),
+    fmtBytes(used) + " / " + fmtBytes(total),
+    fmtBytes(total > used ? total - used : 0),
+    "http://" + WiFi.softAPIP().toString()
+  };
+
+  for (int i = 0; i < 5; i++) {
+    int y = 27 + i * 17;
+    lcd.setFont(&fonts::efontTW_14);
+    lcd.setTextSize(1.0f, 1.0f);
+    lcd.setTextDatum(textdatum_t::top_left);
+    lcd.setTextColor(C_MUTED, C_BG);
+    lcd.drawString(labels[i], 12, y);
+    lcd.setTextColor(C_TEXT, C_BG);
+    lcd.drawString(fitText(values[i], 226, &fonts::efontTW_14), 84, y);
+  }
+
+  lcd.setFont(&fonts::efontTW_14);
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setTextColor(C_MUTED, C_BG);
+  lcd.drawString("至網頁「電子相片」即可上傳", 160, 128);
+}
+
+
 void drawWeatherScreen() {
   lcd.fillScreen(C_BG);
   drawHeader("天氣");
@@ -1610,6 +2109,21 @@ void openOtaScreen() {
   screen = SCR_OTA;
   if (otaStatus.length() == 0) otaStatus = "待機";
   drawOtaScreen();
+}
+
+void openPhotoView() {
+  returnScreen = SCR_PHOTO_MENU;
+  screen = SCR_PHOTO_VIEW;
+  refreshPhotoList();
+  if (photoIdx >= photoCount) photoIdx = 0;
+  drawPhotoView();
+}
+
+void openPhotoInfo() {
+  returnScreen = SCR_PHOTO_MENU;
+  screen = SCR_PHOTO_INFO;
+  refreshPhotoList();
+  drawPhotoInfo();
 }
 
 void adjustScanTop() {
@@ -1976,7 +2490,8 @@ void activateMenuItem() {
     else if (menu.sel == 2) openWeather();
     else if (menu.sel == 3) openClock();
     else if (menu.sel == 4) showStockMenu();
-    else if (menu.sel == 5) openOtaScreen();
+    else if (menu.sel == 5) showPhotoMenu();
+    else if (menu.sel == 6) openOtaScreen();
   } else if (screen == SCR_SYS_MENU) {
     if (menu.sel == 0) openWifiInfo();
     else if (menu.sel == 1) openSystemInfo();
@@ -1989,6 +2504,9 @@ void activateMenuItem() {
     if (menu.sel == 0) openStockQuote();
     else if (menu.sel == 1) openStockChart();
     else if (menu.sel == 2) openSymbolKeyboard();
+  } else if (screen == SCR_PHOTO_MENU) {
+    if (menu.sel == 0) openPhotoView();
+    else if (menu.sel == 1) openPhotoInfo();
   }
 }
 
@@ -2077,7 +2595,25 @@ void handleInput(uint8_t evNext, uint8_t evOk) {
     return;
   }
 
-  if (screen == SCR_WIFI_INFO || screen == SCR_SYS_INFO) {
+  if (screen == SCR_PHOTO_VIEW) {
+    if (evNext == EV_SHORT) {
+      photoStep(1);
+    } else if (evNext == EV_LONG) {
+      photoStep(-1);
+    } else if (evOk == EV_SHORT) {
+      refreshPhotoList();
+      if (photoCount == 0) drawPhotoEmpty();
+      else {
+        if (photoIdx >= photoCount) photoIdx = 0;
+        drawPhotoView();
+      }
+    } else if (evOk == EV_LONG) {
+      goBack();
+    }
+    return;
+  }
+
+  if (screen == SCR_WIFI_INFO || screen == SCR_SYS_INFO || screen == SCR_PHOTO_INFO) {
     if (evOk == EV_LONG) goBack();
     return;
   }
@@ -2093,7 +2629,8 @@ void handleInput(uint8_t evNext, uint8_t evOk) {
     return;
   }
 
-  if (screen == SCR_MAIN || screen == SCR_SYS_MENU || screen == SCR_WIFI_MENU || screen == SCR_STOCK_MENU) {
+  if (screen == SCR_MAIN || screen == SCR_SYS_MENU || screen == SCR_WIFI_MENU ||
+      screen == SCR_STOCK_MENU || screen == SCR_PHOTO_MENU) {
     if (evNext == EV_SHORT) menuMove(1);
     else if (evNext == EV_LONG) menuMove(-1);
     else if (evOk == EV_SHORT) activateMenuItem();
@@ -2147,6 +2684,7 @@ void setup() {
 
   startAccessPoint();
   initFileSystem();
+  refreshPhotoList();
   setupWebServer();
 
   if (cfgSsid.length()) {
@@ -2184,16 +2722,21 @@ void loop() {
   if (now - lastBatMs >= BAT_INTERVAL_MS) {
     lastBatMs = now;
     updateBattery();
-    if (screen != SCR_SPLASH) drawStatusIcons();
+    if (screen != SCR_SPLASH && screen != SCR_PHOTO_VIEW) drawStatusIcons();
   }
 
   if (now - lastIconMs >= ICON_INTERVAL_MS) {
     lastIconMs = now;
     iconBlink = !iconBlink;
-    if (screen != SCR_SPLASH) drawStatusIcons();
+    if (screen != SCR_SPLASH && screen != SCR_PHOTO_VIEW) drawStatusIcons();
   }
 
   if (screen == SCR_CLOCK) updateClock();
+
+  if (screen == SCR_PHOTO_VIEW && photoCount > 1 && now - photoLastMs >= PHOTO_SLIDE_MS) {
+    photoIdx = (photoIdx + 1) % photoCount;
+    drawPhotoView();
+  }
 
   delay(5);
 }
