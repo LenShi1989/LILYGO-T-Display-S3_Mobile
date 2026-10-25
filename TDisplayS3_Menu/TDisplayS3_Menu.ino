@@ -1,6 +1,6 @@
 /*
  * LILYGO T-Display-S3 控制面板
- * 軟體版本：1.2.0
+ * 軟體版本：1.3.0
  * Arduino IDE：2.3.10
  * Arduino CLI：1.5.1
  * ESP32 Arduino Core：3.3.12
@@ -16,6 +16,11 @@
  * - 主選單「電子相片」，可全螢幕播放 SPIFFS 內的 JPG/PNG 相片。
  * - Web 控制台改為側邊欄，提供相片上傳/刪除與 OTA 更新。
  * - 後端新增相片上傳、清單、刪除與檔案讀取 API。
+ *
+ * 1.3.0 新增：
+ * - AP SSID 改為 esp32-TTGO-S3。
+ * - Web 控制台可上傳 spiffs.bin，直接更新 SPIFFS 映像。
+ * - 提供 tools/build_spiffs.ps1 產生與燒錄 SPIFFS 映像。
  */
 
 #include <Arduino.h>
@@ -26,6 +31,7 @@
 #include <SPIFFS.h>
 #include <WebServer.h>
 #include <Update.h>
+#include <esp_partition.h>
 #include <ArduinoJson.h>
 #include <time.h>
 #include <ctype.h>
@@ -102,8 +108,8 @@ static constexpr int ROW_H = 23;
 static constexpr int MAX_SCAN = 24;
 static constexpr int MAX_POINTS = 120;
 
-static constexpr const char* FW_VERSION = "1.2.0";
-static constexpr const char* AP_SSID = "TTGO-OTA-Setup";
+static constexpr const char* FW_VERSION = "1.3.0";
+static constexpr const char* AP_SSID = "esp32-TTGO-S3";
 static constexpr uint32_t OTA_REBOOT_DELAY_MS = 1200;
 
 static constexpr const char* PHOTO_DIR = "/photos";
@@ -312,6 +318,16 @@ bool otaSuccess = false;
 uint8_t otaProgress = 0;
 size_t otaTotalSize = 0;
 String otaStatus = "待機";
+
+// SPIFFS 映像更新狀態（與韌體 OTA 各自獨立）
+bool fsRunning = false;
+bool fsSuccess = false;
+bool fsStarted = false;
+uint8_t fsProgress = 0;
+size_t fsTotalSize = 0;
+String fsStatus = "";
+
+size_t spiffsImageSize();
 
 String photoNames[MAX_PHOTOS];
 size_t photoSizes[MAX_PHOTOS];
@@ -711,6 +727,8 @@ void handleStatus() {
   json += "\"fsTotal\":" + String(spiffsReady ? (unsigned)SPIFFS.totalBytes() : 0) + ',';
   json += "\"fsUsed\":" + String(spiffsReady ? (unsigned)SPIFFS.usedBytes() : 0) + ',';
   json += "\"photoCount\":" + String(photoCount) + ',';
+  json += "\"fsImageSize\":" + String((unsigned)spiffsImageSize()) + ',';
+  json += "\"fsUpdating\":" + String(fsRunning ? "true" : "false") + ',';
   json += "\"otaRunning\":" + String(otaRunning ? "true" : "false");
   json += '}';
   webServer.sendHeader("Cache-Control", "no-store");
@@ -950,6 +968,9 @@ void handleUpdateUpload() {
     otaTotalSize = 0;
     String sizeHeader = webServer.header("X-File-Size");
     if (sizeHeader.length()) otaTotalSize = (size_t)strtoul(sizeHeader.c_str(), nullptr, 10);
+    // 切換到韌體更新時，清掉先前的 SPIFFS 狀態顯示。
+    fsStatus = "";
+    fsProgress = 0;
 
     size_t maxSize = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
     size_t beginSize = (otaTotalSize > 0 && otaTotalSize <= maxSize) ? otaTotalSize : maxSize;
@@ -1028,6 +1049,140 @@ void handleUpdateDone() {
   }
 }
 
+
+size_t spiffsImageSize() {
+  const esp_partition_t* part = esp_partition_find_first(
+      ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, nullptr);
+  return part ? part->size : 0;
+}
+
+void handleSpiffsUpload() {
+  HTTPUpload& up = webServer.upload();
+
+  if (up.status == UPLOAD_FILE_START) {
+    fsTotalSize = 0;
+    String sizeHeader = webServer.header("X-File-Size");
+    if (sizeHeader.length()) fsTotalSize = (size_t)strtoul(sizeHeader.c_str(), nullptr, 10);
+
+    fsRunning = true;
+    fsSuccess = false;
+    fsStarted = false;
+    fsProgress = 0;
+    fsStatus = "接收映像";
+
+    size_t expected = spiffsImageSize();
+    if (expected == 0) {
+      fsRunning = false;
+      fsStatus = "找不到 SPIFFS 分割區";
+      drawOtaIfVisible();
+      return;
+    }
+    if (fsTotalSize == 0) {
+      fsRunning = false;
+      fsStatus = "缺少檔案大小";
+      drawOtaIfVisible();
+      return;
+    }
+    if (fsTotalSize != expected) {
+      fsRunning = false;
+      fsStatus = "映像大小不符";
+      drawOtaIfVisible();
+      Serial.printf("[FS] size mismatch: %u != %u\n",
+                    (unsigned)fsTotalSize, (unsigned)expected);
+      return;
+    }
+
+    // 直接寫入分割區前先卸載 SPIFFS，避免檔案系統快取與寫入衝突。
+    SPIFFS.end();
+    spiffsReady = false;
+
+    if (!Update.begin(fsTotalSize, U_SPIFFS)) {
+      Update.printError(Serial);
+      fsRunning = false;
+      fsStatus = String("無法開始: ") + Update.errorString();
+      spiffsReady = SPIFFS.begin(false);
+      drawOtaIfVisible();
+      return;
+    }
+    fsStarted = true;
+    drawOtaIfVisible();
+    Serial.printf("[FS] start %s, %u bytes\n", up.filename.c_str(), (unsigned)fsTotalSize);
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (!fsStarted || !fsRunning) return;
+    if (Update.isRunning() && !Update.hasError()) {
+      size_t written = Update.write(up.buf, up.currentSize);
+      if (written != up.currentSize) Update.printError(Serial);
+    }
+    if (fsTotalSize > 0) {
+      int pct = (int)((uint64_t)Update.progress() * 100 / fsTotalSize);
+      if (pct > 99) pct = 99;
+      if (pct / 2 != fsProgress / 2) {
+        fsProgress = (uint8_t)pct;
+        fsStatus = "寫入映像 " + String(pct) + "%";
+        drawOtaIfVisible();
+      }
+    }
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (!fsStarted) {
+      // START 階段已被拒絕（例如大小不符），保留該訊息。
+      fsRunning = false;
+      drawOtaIfVisible();
+      return;
+    }
+    fsStarted = false;
+    if (Update.isRunning() && !Update.hasError() && Update.end(true)) {
+      fsSuccess = true;
+      fsProgress = 100;
+      fsStatus = "映像寫入完成";
+    } else {
+      Update.printError(Serial);
+      fsStatus = Update.hasError() ? String("寫入失敗: ") + Update.errorString()
+                                   : "寫入未完成";
+      // 失敗時不格式化，只嘗試重新掛載，避免清空既有內容。
+      spiffsReady = SPIFFS.begin(false);
+      refreshPhotoList();
+    }
+    fsRunning = false;
+    drawOtaIfVisible();
+  } else if (up.status == UPLOAD_FILE_ABORTED) {
+    if (Update.isRunning()) Update.abort();
+    fsStarted = false;
+    fsRunning = false;
+    fsSuccess = false;
+    fsStatus = "已中斷";
+    spiffsReady = SPIFFS.begin(false);
+    refreshPhotoList();
+    drawOtaIfVisible();
+  }
+}
+
+void handleSpiffsUploadDone() {
+  bool ok = fsSuccess && !Update.hasError();
+  fsRunning = false;
+  fsSuccess = false;
+  fsStarted = false;
+
+  webServer.sendHeader("Connection", "close");
+  webServer.sendHeader("Cache-Control", "no-store");
+  if (ok) {
+    fsProgress = 100;
+    fsStatus = "映像更新完成";
+    drawOtaIfVisible();
+    webServer.send(200, "application/json; charset=utf-8",
+                   "{\"ok\":true,\"message\":\"SPIFFS 映像已寫入，裝置重新啟動\"}");
+    Serial.println("[FS] success, restarting");
+    delay(OTA_REBOOT_DELAY_MS);
+    ESP.restart();
+  } else {
+    if (fsStatus.length() == 0) fsStatus = "更新失敗";
+    if (!spiffsReady) spiffsReady = SPIFFS.begin(false);
+    refreshPhotoList();
+    drawOtaIfVisible();
+    String msg = "{\"ok\":false,\"message\":" + jsonQuote(fsStatus) + "}";
+    webServer.send(500, "application/json; charset=utf-8", msg);
+  }
+}
+
 void setupWebServer() {
   static const char* OTA_HEADERS[] = {"X-File-Size"};
   webServer.collectHeaders(OTA_HEADERS, 1);
@@ -1038,6 +1193,7 @@ void setupWebServer() {
   webServer.on("/api/photos/upload", HTTP_POST, handlePhotoUploadDone, handlePhotoUpload);
   webServer.on("/api/photos/delete", HTTP_POST, handlePhotoDelete);
   webServer.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
+  webServer.on("/update/spiffs", HTTP_POST, handleSpiffsUploadDone, handleSpiffsUpload);
   webServer.on("/favicon.ico", HTTP_GET, []() { webServer.send(204); });
   webServer.onNotFound(handleNotFound);
   webServer.begin();
@@ -1614,13 +1770,18 @@ void drawOtaScreen() {
   drawHeader("OTA 更新");
   drawFooter("P14長按:返回");
 
+  bool fsActive = fsRunning || fsStatus.length() > 0;
+  bool busy = otaRunning || fsRunning;
+  uint8_t percent = fsActive ? fsProgress : otaProgress;
+  String statusText = fsActive ? fsStatus : otaStatus;
+
   const char* labels[5] = {"AP名稱", "密碼", "網址", "韌體", "狀態"};
   String values[5] = {
     AP_SSID,
     "無(開放)",
     "http://" + WiFi.softAPIP().toString(),
     FW_VERSION,
-    otaStatus
+    statusText
   };
 
   for (int i = 0; i < 5; i++) {
@@ -1630,7 +1791,7 @@ void drawOtaScreen() {
     lcd.setTextDatum(textdatum_t::top_left);
     lcd.setTextColor(C_MUTED, C_BG);
     lcd.drawString(labels[i], 12, y);
-    lcd.setTextColor(i == 4 && otaRunning ? C_ACCENT2 : C_TEXT, C_BG);
+    lcd.setTextColor(i == 4 && busy ? C_ACCENT2 : C_TEXT, C_BG);
     lcd.drawString(fitText(values[i], 226, &fonts::efontTW_14), 84, y);
   }
 
@@ -1639,9 +1800,9 @@ void drawOtaScreen() {
   int barW = 296;
   int barH = 15;
   lcd.drawRoundRect(barX, barY, barW, barH, 4, C_LINE);
-  int fillW = (barW - 4) * (int)otaProgress / 100;
+  int fillW = (barW - 4) * (int)percent / 100;
   if (fillW > 0) {
-    lcd.fillRoundRect(barX + 2, barY + 2, fillW, barH - 4, 3, otaRunning ? C_ACCENT2 : C_ACCENT);
+    lcd.fillRoundRect(barX + 2, barY + 2, fillW, barH - 4, 3, busy ? C_ACCENT2 : C_ACCENT);
   }
 
   lcd.setFont(&fonts::efontTW_14);
@@ -2512,7 +2673,7 @@ void activateMenuItem() {
 
 void handleInput(uint8_t evNext, uint8_t evOk) {
   if (screen == SCR_SPLASH) return;
-  if (otaRunning) return;
+  if (otaRunning || fsRunning) return;
 
   if (screen == SCR_KEYBOARD) {
     if (evNext == EV_SHORT) {

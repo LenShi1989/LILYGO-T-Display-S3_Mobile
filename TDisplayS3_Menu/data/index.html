@@ -423,6 +423,7 @@
     <section class="grid" aria-label="裝置狀態">
       <div class="stat"><span class="k">韌體版本</span><span class="v" id="st-version">--</span></div>
       <div class="stat"><span class="k">相片數量</span><span class="v" id="st-photos">--</span></div>
+      <div class="stat"><span class="k">AP SSID</span><span class="v" id="st-apssid">--</span></div>
       <div class="stat"><span class="k">AP 位址</span><span class="v" id="st-apip">--</span></div>
       <div class="stat"><span class="k">WiFi 用戶端</span><span class="v" id="st-sta">--</span></div>
       <div class="stat"><span class="k">SPIFFS</span><span class="v" id="st-fs">--</span></div>
@@ -518,18 +519,53 @@
         <p class="warn">更新期間請保持供電，勿關閉頁面或離開 AP 網路。寫入完成後裝置會自動重新啟動。</p>
       </section>
 
+      <section class="card">
+        <h2>SPIFFS 映像更新</h2>
+        <div id="fsDrop" class="drop" role="button" tabindex="0"
+             aria-label="選擇或拖放 SPIFFS 映像檔">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+            <path d="M3 9h18M3 15h18M8 4v16M16 4v16"></path>
+          </svg>
+          <p>拖放 <strong>spiffs.bin</strong> 到此處，或 <span class="link">選擇檔案</span></p>
+          <p class="hint">映像大小需與分割區相同（<span id="fsExpected">--</span>）</p>
+          <input id="fsFile" type="file" accept=".bin,application/octet-stream" hidden>
+        </div>
+
+        <div id="fsFileBox" class="file hidden">
+          <div class="file-ico">FS</div>
+          <div class="file-meta">
+            <div class="file-name" id="fsFileName">--</div>
+            <div class="file-size" id="fsFileSize">--</div>
+          </div>
+          <button id="fsClear" class="ghost" type="button">移除</button>
+        </div>
+
+        <div id="fsBarWrap" class="bar-wrap hidden">
+          <div class="bar"><div id="fsBar" class="fill"></div></div>
+          <div class="bar-meta"><span id="fsPct">0%</span><span id="fsSpeed"></span></div>
+        </div>
+
+        <button id="fsUpload" class="btn" type="button" disabled>更新 SPIFFS 映像</button>
+        <p id="fsMsg" class="msg">更新網頁介面或內建檔案時使用。</p>
+
+        <p class="warn">SPIFFS 映像會覆蓋整個分割區，網頁與相片都會被映像內容取代。更新期間請勿斷電，若中斷可能導致網頁與相片遺失。</p>
+      </section>
+
       <section class="card tips">
         <h2>使用方式</h2>
         <ol>
-          <li>Arduino IDE：<strong>草稿碼 → 匯出已編譯的二進位檔</strong>，取得 <code>.bin</code>。</li>
-          <li>連線 AP <code>TTGO-OTA-Setup</code>（免密碼），開啟 <code>http://192.168.4.1</code>。</li>
-          <li>選擇檔案後按「開始更新」，等待進度完成。</li>
-          <li>裝置自動重啟後，本頁會重新連線並顯示新版本。</li>
+          <li>韌體：Arduino IDE <strong>草稿碼 → 匯出已編譯的二進位檔</strong>，取得 <code>.bin</code>。</li>
+          <li>SPIFFS：執行 <code>tools\build_spiffs.ps1</code> 產生 <code>spiffs.bin</code>。</li>
+          <li>連線 AP <code id="tip-apssid">esp32-TTGO-S3</code>（免密碼），開啟 <code>http://192.168.4.1</code>。</li>
+          <li>選擇對應檔案後按「開始更新」，等待進度完成。</li>
+          <li>裝置自動重啟後，本頁會重新連線並顯示目前版本。</li>
         </ol>
       </section>
     </div>
 
-    <footer>T-Display-S3 Control Panel · Photo Gallery &amp; OTA Updater</footer>
+    <footer>T-Display-S3 Control Panel · Photo Gallery · OTA &amp; SPIFFS Updater</footer>
   </main>
 </div>
 
@@ -538,6 +574,9 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
+
+  var apSsid = "esp32-TTGO-S3";
+  var fsImageSize = 0;
 
   /* ---------------------------------------------------------- helpers */
   function fmtBytes(n) {
@@ -589,6 +628,13 @@
       .then(function (s) {
         setBadge("online", "已連線");
         $("st-version").textContent = "v" + s.version;
+        apSsid = s.apSsid || apSsid;
+        $("st-apssid").textContent = apSsid;
+        if (s.fsImageSize) {
+          fsImageSize = s.fsImageSize;
+          $("fsExpected").textContent =
+            fmtBytes(fsImageSize) + " / 0x" + fsImageSize.toString(16).toUpperCase();
+        }
         $("st-apip").textContent = s.apIp || "--";
         $("st-sta").textContent = s.staConnected ? (s.staSsid || "已連線") : "未連線";
         $("st-fs").textContent = s.fsReady
@@ -611,7 +657,7 @@
   var views = { photos: $("view-photos"), ota: $("view-ota") };
   var titles = {
     photos: ["電子相片", "上傳圖檔，裝置會以全螢幕播放"],
-    ota: ["OTA 更新", "上傳 .bin 韌體，完成後自動重新啟動"]
+    ota: ["OTA 更新", "上傳韌體或 SPIFFS 映像，完成後自動重新啟動"]
   };
 
   function setView(name) {
@@ -862,7 +908,7 @@
       };
 
       xhr.onerror = function () {
-        fail("連線中斷，請確認仍連線 AP TTGO-OTA-Setup 後重試。");
+        fail("連線中斷，請確認仍連線 AP " + apSsid + " 後重試。");
         setBadge("offline", "離線");
       };
 
@@ -998,14 +1044,28 @@
   });
 
   /* ================================================================
-     OTA 更新
+     OTA 更新（韌體 / SPIFFS 映像）
      ================================================================ */
   var file = null;
+  var fsFile = null;
   var uploading = false;
   var rebootTimer = null;
 
+  function setFsMsg(text, kind) {
+    var m = $("fsMsg");
+    m.textContent = text;
+    m.className = "msg" + (kind ? " " + kind : "");
+  }
+
+  function setFsProgress(pct) {
+    pct = Math.max(0, Math.min(100, Math.round(pct)));
+    $("fsBar").style.width = pct + "%";
+    $("fsPct").textContent = pct + "%";
+  }
+
+  /* ---------------------------------------------------------- 韌體 */
   function pickFile(f) {
-    if (!f || uploading) return;
+    if (!f || uploading || busy) return;
     if (!/\.bin$/i.test(f.name)) {
       setMsg("請選擇 .bin 韌體檔。", "err");
       return;
@@ -1038,23 +1098,39 @@
     setMsg("請選擇編譯產生的韌體檔（.bin）。", "");
   }
 
-  function waitForReboot() {
+  function waitForReboot(kind) {
     var tries = 0;
     if (rebootTimer) clearInterval(rebootTimer);
     rebootTimer = setInterval(function () {
       tries++;
       refresh()
         .then(function (s) {
+          // 重啟前裝置仍可能正常回應，先用 uptime 確認真的重開機；
+          // 若一直沒觀察到，最多等 12 次後仍視為完成。
+          if (typeof s.uptime === "number" && s.uptime > 60 && tries < 12) {
+            return;
+          }
           clearInterval(rebootTimer);
           rebootTimer = null;
           uploading = false;
-          file = null;
-          $("file").value = "";
-          $("fileBox").classList.add("hidden");
-          $("upload").disabled = true;
-          $("speed").textContent = "";
           setBadge("online", "已連線");
-          setMsg("裝置已重新上線，目前版本 v" + s.version + "。", "ok");
+          if (kind === "spiffs") {
+            fsFile = null;
+            $("fsFile").value = "";
+            $("fsFileBox").classList.add("hidden");
+            $("fsUpload").disabled = true;
+            $("fsSpeed").textContent = "";
+            setFsMsg("SPIFFS 映像已更新，正在載入新介面…", "ok");
+            setMsg("裝置已重新上線，目前版本 v" + s.version + "。", "ok");
+            setTimeout(function () { location.reload(); }, 1500);
+          } else {
+            file = null;
+            $("file").value = "";
+            $("fileBox").classList.add("hidden");
+            $("upload").disabled = true;
+            $("speed").textContent = "";
+            setMsg("裝置已重新上線，目前版本 v" + s.version + "。", "ok");
+          }
         })
         .catch(function () {
           setBadge("offline", "重新啟動中");
@@ -1062,7 +1138,9 @@
             clearInterval(rebootTimer);
             rebootTimer = null;
             uploading = false;
-            setMsg("尚未偵測到裝置，請確認已重新連上 AP 後重新整理本頁。", "err");
+            var hint = "尚未偵測到裝置，請確認已重新連上 AP " + apSsid + " 後重新整理本頁。";
+            if (kind === "spiffs") setFsMsg(hint, "err");
+            else setMsg(hint, "err");
           }
         });
     }, 2500);
@@ -1101,7 +1179,7 @@
         setProgress(100);
         setMsg("更新成功，裝置正在重新啟動…", "ok");
         setBadge("", "重新啟動中");
-        waitForReboot();
+        waitForReboot("firmware");
       } else {
         uploading = false;
         $("upload").disabled = false;
@@ -1117,13 +1195,109 @@
       $("upload").disabled = false;
       $("clear").disabled = false;
       $("speed").textContent = "";
-      setMsg("連線中斷，請確認仍連線 AP TTGO-OTA-Setup 後重試。", "err");
+      setMsg("連線中斷，請確認仍連線 AP " + apSsid + " 後重試。", "err");
       setBadge("offline", "離線");
     };
 
     xhr.send(fd);
   }
 
+  /* ---------------------------------------------------------- SPIFFS 映像 */
+  function pickFsFile(f) {
+    if (!f || uploading || busy) return;
+    if (!/\.bin$/i.test(f.name)) {
+      setFsMsg("請選擇 spiffs.bin 映像檔。", "err");
+      return;
+    }
+    if (fsImageSize && f.size !== fsImageSize) {
+      setFsMsg("映像大小不符：需為 " + fmtBytes(fsImageSize) + "，目前為 " + fmtBytes(f.size) + "。", "err");
+      return;
+    }
+    if (!fsImageSize && f.size < 4096) {
+      setFsMsg("檔案太小，可能不是有效的映像。", "err");
+      return;
+    }
+    fsFile = f;
+    $("fsFileName").textContent = f.name;
+    $("fsFileSize").textContent = fmtBytes(f.size);
+    $("fsFileBox").classList.remove("hidden");
+    $("fsClear").disabled = false;
+    $("fsUpload").disabled = false;
+    setFsProgress(0);
+    $("fsSpeed").textContent = "";
+    $("fsBarWrap").classList.remove("hidden");
+    setFsMsg("準備就緒，按「更新 SPIFFS 映像」寫入。", "");
+  }
+
+  function clearFsFile() {
+    if (uploading) return;
+    fsFile = null;
+    $("fsFile").value = "";
+    $("fsFileBox").classList.add("hidden");
+    $("fsBarWrap").classList.add("hidden");
+    $("fsUpload").disabled = true;
+    $("fsSpeed").textContent = "";
+    setFsProgress(0);
+    setFsMsg("更新網頁介面或內建檔案時使用。", "");
+  }
+
+  function startFsUpload() {
+    if (!fsFile || uploading || busy) return;
+    uploading = true;
+    setBadge("", "更新中");
+    $("fsUpload").disabled = true;
+    $("fsClear").disabled = true;
+    setFsMsg("正在傳送 SPIFFS 映像，請勿關閉頁面…", "");
+    setFsProgress(0);
+
+    var fd = new FormData();
+    fd.append("image", fsFile, fsFile.name);
+
+    var xhr = new XMLHttpRequest();
+    var started = Date.now();
+
+    xhr.open("POST", "/update/spiffs", true);
+    xhr.setRequestHeader("X-File-Size", String(fsFile.size));
+
+    xhr.upload.onprogress = function (e) {
+      if (!e.lengthComputable) return;
+      setFsProgress(e.loaded / e.total * 100);
+      var sec = (Date.now() - started) / 1000;
+      if (sec > 0.4) $("fsSpeed").textContent = fmtBytes(e.loaded / sec) + "/s";
+    };
+
+    xhr.onload = function () {
+      var res = null;
+      try { res = JSON.parse(xhr.responseText); } catch (err) { /* ignore */ }
+      $("fsSpeed").textContent = "";
+      if (xhr.status === 200 && res && res.ok) {
+        setFsProgress(100);
+        setFsMsg("映像寫入成功，裝置正在重新啟動…", "ok");
+        setBadge("", "重新啟動中");
+        waitForReboot("spiffs");
+      } else {
+        uploading = false;
+        $("fsUpload").disabled = false;
+        $("fsClear").disabled = false;
+        setFsMsg((res && res.message) || ("更新失敗（HTTP " + xhr.status + "）"), "err");
+        setBadge("online", "已連線");
+        refresh().catch(function () {});
+      }
+    };
+
+    xhr.onerror = function () {
+      uploading = false;
+      $("fsUpload").disabled = false;
+      $("fsClear").disabled = false;
+      $("fsSpeed").textContent = "";
+      setFsMsg("連線中斷，請確認仍連線 AP " + apSsid + " 後重試。", "err");
+      setBadge("offline", "離線");
+    };
+
+    xhr.send(fd);
+  }
+
+  /* ---------------------------------------------------------- 韌體事件 */
   $("drop").addEventListener("click", function () {
     if (!uploading) $("file").click();
   });
@@ -1155,6 +1329,39 @@
   });
   $("clear").addEventListener("click", clearFile);
   $("upload").addEventListener("click", startUpload);
+
+  /* ---------------------------------------------------------- SPIFFS 事件 */
+  $("fsDrop").addEventListener("click", function () {
+    if (!uploading) $("fsFile").click();
+  });
+  $("fsDrop").addEventListener("keydown", function (e) {
+    if ((e.key === "Enter" || e.key === " ") && !uploading) {
+      e.preventDefault();
+      $("fsFile").click();
+    }
+  });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    $("fsDrop").addEventListener(ev, function (e) {
+      e.preventDefault();
+      if (!uploading) $("fsDrop").classList.add("over");
+    });
+  });
+  ["dragleave", "dragend", "drop"].forEach(function (ev) {
+    $("fsDrop").addEventListener(ev, function (e) {
+      e.preventDefault();
+      $("fsDrop").classList.remove("over");
+    });
+  });
+  $("fsDrop").addEventListener("drop", function (e) {
+    if (e.dataTransfer && e.dataTransfer.files.length) {
+      pickFsFile(e.dataTransfer.files[0]);
+    }
+  });
+  $("fsFile").addEventListener("change", function (e) {
+    pickFsFile(e.target.files[0]);
+  });
+  $("fsClear").addEventListener("click", clearFsFile);
+  $("fsUpload").addEventListener("click", startFsUpload);
 
   /* ---------------------------------------------------------- boot */
   setView(location.hash.replace("#", "") || "photos");

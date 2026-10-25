@@ -1,8 +1,8 @@
 # LILYGO T-Display-S3 控制面板
 
-以 Arduino IDE 開發的 LILYGO T-Display-S3（ESP32-S3）多功能控制面板。使用 LovyanGFX 驅動 170x320 橫向 ST7789 顯示器，提供繁體中文選單、WiFi 設定、天氣、NTP 時鐘、股票報價與折線圖、電子相片播放，並在右上角顯示 WiFi 與電池狀態。內建 AP + WiFi 用戶端共存模式，可透過瀏覽器上傳相片與進行 OTA 韌體更新。
+以 Arduino IDE 開發的 LILYGO T-Display-S3（ESP32-S3）多功能控制面板。使用 LovyanGFX 驅動 170x320 橫向 ST7789 顯示器，提供繁體中文選單、WiFi 設定、天氣、NTP 時鐘、股票報價與折線圖、電子相片播放，並在右上角顯示 WiFi 與電池狀態。內建 AP + WiFi 用戶端共存模式，可透過瀏覽器上傳相片、更新 OTA 韌體與 SPIFFS 映像。
 
-目前軟體版本：`1.2.0`
+目前軟體版本：`1.3.0`
 
 ## 功能
 
@@ -72,7 +72,7 @@
 
 ### OTA 更新
 
-- 開機即啟動 AP 熱點，SSID `TTGO-OTA-Setup`，免密碼（開放網路）。
+- 開機即啟動 AP 熱點，SSID `esp32-TTGO-S3`，免密碼（開放網路）。
 - AP 與 WiFi 用戶端（STA）共存，連線路由器時不影響熱點。
 - 熱點 IP 固定為 `192.168.4.1`，Web 伺服器監聽 80 埠。
 - `index.html` 儲存於 SPIFFS，由 `webServer` 讀取後回傳。
@@ -80,6 +80,7 @@
 - 前端支援拖放或選擇 `.bin`，顯示上傳進度、速度與裝置狀態。
 - 後端使用 ESP32 `Update` 函式庫寫入 OTA 分割區，完成後自動重新啟動。
 - OTA 只會寫入 app 分割區，不會更動 SPIFFS 內的 `index.html`。
+- Web 控制台另有「SPIFFS 映像更新」，可上傳 `spiffs.bin` 直接更新網頁與裝置內檔案，不需連接 USB。
 - 更新期間裝置按鍵暫停回應，畫面顯示接收進度。
 - OTA 畫面顯示 AP 名稱、網址、韌體版本與進度。
 
@@ -100,6 +101,8 @@ LILYGO T-Display-S3/
 │  ├─ partitions.csv
 │  └─ data/
 │     └─ index.html
+├─ tools/
+│  └─ build_spiffs.ps1
 └─ docs/
    └─ 硬體腳位參考圖片
 ```
@@ -199,13 +202,31 @@ LILYGO T-Display-S3/
 目前編譯結果：
 
 ```text
-Sketch 使用 2324627 位元組（73%）的程式儲存空間。最大為 3145728 位元組
-全域變數使用 53536 位元組 (16%) 的動態記憶體，保留 274144 位元組給區域變數。最大 327680 位元組
+Sketch 使用 2327799 位元組（73%）的程式儲存空間。最大為 3145728 位元組
+全域變數使用 53560 位元組 (16%) 的動態記憶體，保留 274120 位元組給區域變數。最大 327680 位元組
 ```
 
-### 上傳 SPIFFS 頁面
+### 建立與燒錄 SPIFFS 映像
 
-Arduino IDE 2.x 沒有內建 SPIFFS 上傳功能。請先完成一次 USB 韌體上傳（讓新的分割表生效），再於專案根目錄執行：
+Arduino IDE 2.x 沒有內建 SPIFFS 上傳功能，專案提供 `tools/build_spiffs.ps1` 自動處理：
+
+```powershell
+# 只產生映像（輸出到專案根目錄的 spiffs.bin）
+powershell -ExecutionPolicy Bypass -File tools\build_spiffs.ps1
+
+# 產生映像並直接燒錄（COM5 請改成實際序列埠）
+powershell -ExecutionPolicy Bypass -File tools\build_spiffs.ps1 -Flash -Port COM5
+```
+
+腳本會：
+
+1. 從 `TDisplayS3_Menu/partitions.csv` 讀取 `spiffs` 分割區的 offset 與 size。
+2. 自動找尋 Arduino ESP32 工具鏈中的 `mkspiffs.exe` 與 `esptool.exe`（不需手動改版本路徑）。
+3. 以 `-b 4096 -p 256` 打包 `TDisplayS3_Menu/data`，並檢查映像大小是否等於分割區大小。
+
+首次使用或更換分割表後，仍需先以 USB 上傳一次完整韌體，新的分割表才會生效。
+
+也可以手動執行：
 
 ```powershell
 $mkspiffs = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\mkspiffs\0.2.3\mkspiffs.exe"
@@ -221,7 +242,7 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 - `mkspiffs` 與 `esptool` 的版本目錄可能不同，請依 `%LOCALAPPDATA%\Arduino15\packages\esp32\tools\` 實際路徑調整。
 - 燒錄後開啟 `http://192.168.4.1` 應可看到 Web 控制台頁面。
 - 若頁面顯示「SPIFFS 未就緒」，代表 `/index.html` 不存在或分割表不符。
-- 之後更新 `data/index.html` 只需重新打包 SPIFFS，不需要重新上傳主程式。
+- 之後更新 `data/index.html` 可重新打包燒錄，或直接從 Web 控制台上傳 `spiffs.bin`。
 
 ## 操作方式
 
@@ -266,7 +287,7 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 
 ### 連線方式
 
-1. 手機或電腦連線 WiFi `TTGO-OTA-Setup`（開放網路，無密碼）。
+1. 手機或電腦連線 WiFi `esp32-TTGO-S3`（開放網路，無密碼）。
 2. 瀏覽器開啟 `http://192.168.4.1`。
 3. 左側側邊欄切換「電子相片」與「OTA 更新」；手機版顯示於頂端。
 4. 若裝置同時連上路由器，也可使用裝置的 STA IP 開啟同一頁面。
@@ -282,12 +303,14 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 | `/api/photos/upload` | POST | 接收 JPG/PNG（multipart）並寫入 `/photos/` |
 | `/api/photos/delete` | POST | 以 `name` 表單參數刪除相片 |
 | `/photos/<name>` | GET | 讀取相片檔，供網頁預覽 |
-| `/update` | POST | 接收 `.bin` 並寫入 OTA 分割區，完成後重啟 |
+| `/update` | POST | 接收韌體 `.bin` 並寫入 OTA 分割區，完成後重啟 |
+| `/update/spiffs` | POST | 接收 `spiffs.bin` 並直接寫入 SPIFFS 分割區，完成後重啟 |
 
 - `/update` 使用 `multipart/form-data`，前端以 `X-File-Size` 標頭提供檔案大小以計算進度。
 - 後端依序呼叫 `Update.begin()`、`Update.write()`、`Update.end(true)`。
 - 更新成功回傳 `{"ok":true}` 後約 1.2 秒重新啟動。
 - 更新失敗回傳 HTTP 500 與錯誤訊息，裝置維持原韌體。
+- `/update/spiffs` 使用 `Update.begin(size, U_SPIFFS)` 直接寫入 data 分割區，映像大小必須等於分割區大小。
 - 相片上傳會檢查副檔名（JPG/PNG）、單張 2MB 上限與 SPIFFS 剩餘空間；失敗時刪除半成品檔。
 
 ### 相片上傳流程
@@ -297,6 +320,14 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 3. 按「上傳 N 張」，逐張 POST 至 `/api/photos/upload`，並顯示整體進度與速度。
 4. 後端驗證後寫入 SPIFFS `/photos/`，成功即重新整理相片庫。
 5. 裝置端短按 P14 重新整理，即可在「播放相片」看到新內容。
+
+### SPIFFS 映像更新流程
+
+1. 執行 `tools/build_spiffs.ps1` 產生 `spiffs.bin`，大小需為 10,354,688 bytes（`0x9E0000`）。
+2. 於「OTA 更新 → SPIFFS 映像更新」拖放或選擇 `spiffs.bin`。
+3. 裝置先卸載 SPIFFS，再以 `Update.begin(size, U_SPIFFS)` 直接寫入分割區。
+4. 寫入完成後自動重新啟動，新的網頁與裝置內檔案立即生效。
+5. 大小不符會直接拒絕；寫入中斷時裝置會嘗試重新掛載原分割區並回報錯誤，不會自動格式化。
 
 ### 更新流程
 
@@ -330,7 +361,7 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 | Web 控制台 | `http://192.168.4.1` | 相片上傳與韌體更新 |
 
 - WiFi 模式為 `WIFI_AP_STA`，AP 與 STA 同時運作。
-- AP SSID `TTGO-OTA-Setup` 為開放網路，最多 4 個連線。
+- AP SSID `esp32-TTGO-S3` 為開放網路，最多 4 個連線。
 - HTTPS 使用 `WiFiClientSecure`，目前呼叫 `setInsecure()` 略過憑證驗證。
 - HTTP 請求會跟隨重新導向。
 - 天氣請求逾時 12 秒，股票請求逾時 15 秒。
@@ -355,7 +386,8 @@ $esptool  = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\e
 - `WeatherData`：天氣資料與有效性。
 - `StockData`：股票報價、時間戳與走勢點。
 - `Preferences`：讀寫 NVS 設定。
-- `spiffsReady`、`otaRunning`、`otaProgress`、`otaTotalSize`、`otaStatus`：SPIFFS 與 OTA 狀態。
+- `spiffsReady`、`otaRunning`、`otaProgress`、`otaTotalSize`、`otaStatus`：SPIFFS 與韌體 OTA 狀態。
+- `fsRunning`、`fsProgress`、`fsStatus`、`fsTotalSize`：SPIFFS 映像更新狀態。
 - `webServer`：80 埠 HTTP 伺服器。
 - `photoNames`、`photoSizes`、`photoCount`、`photoIdx`：SPIFFS 相片清單與播放索引。
 - `photoUpload*`：上傳中的檔名、大小、錯誤訊息與已儲存清單。
@@ -416,7 +448,7 @@ ensureWiFi()
 
 ```text
 setup()
-  ├─ startAccessPoint() → WiFi.softAP("TTGO-OTA-Setup")
+  ├─ startAccessPoint() → WiFi.softAP("esp32-TTGO-S3")
   ├─ initFileSystem()   → SPIFFS.begin(true)
   └─ setupWebServer()   → /
                           /api/status
@@ -425,11 +457,13 @@ setup()
                           /api/photos/delete
                           /photos/<name>
                           /update
+                          /update/spiffs
 
 loop()
   ├─ webServer.handleClient()
   │    ├─ handlePhotoUpload() → 寫入 SPIFFS /photos/
-  │    └─ handleUpdateUpload() → Update.begin/write/end → ESP.restart()
+  │    ├─ handleUpdateUpload() → Update.begin/write/end → ESP.restart()
+  │    └─ handleSpiffsUpload() → Update.begin(U_SPIFFS)/write/end → ESP.restart()
   └─ 相片播放：每 6 秒自動換下一張
 ```
 
@@ -438,6 +472,7 @@ loop()
 - `handlePhotoList()`、`handlePhotoUpload()`、`handlePhotoDelete()`、`handlePhotoFile()` 提供相片清單、上傳、刪除與檔案讀取。
 - `handleUpdateUpload()` 依 `UPLOAD_FILE_START/WRITE/END/ABORTED` 狀態寫入韌體。
 - `handleUpdateDone()` 檢查 `Update.hasError()`，成功時延遲重啟。
+- `handleSpiffsUpload()` 先 `SPIFFS.end()` 再寫入 SPIFFS 分割區，失敗時以 `SPIFFS.begin(false)` 重新掛載。
 - 上傳期間 `handleInput()` 直接返回，避免按鍵操作干擾寫入。
 
 ### 繪圖
@@ -447,7 +482,7 @@ loop()
 - `drawStatusIcons()`：WiFi 與電池圖示。
 - `drawMenuScreen()`：通用選單與捲動軸。
 - `drawWeatherScreen()`、`drawClockScreen()`、`drawStockQuoteScreen()`、`drawStockChartScreen()`：各功能頁。
-- `drawOtaScreen()`：AP 資訊、韌體版本與 OTA 進度。
+- `drawOtaScreen()`：AP 資訊、韌體版本與進度；韌體與 SPIFFS 映像更新共用同一個進度列。
 - `drawPhotoView()`、`photoStep()`、`drawPhotoEmpty()`、`drawPhotoInfo()`：相片播放、換頁與資訊頁。
 - `drawKeyboard()`：螢幕鍵盤。
 - `drawBusy()`、`showToast()`：載入與提示訊息。
@@ -492,15 +527,15 @@ loop()
 ### 找不到 OTA 熱點
 
 - 確認裝置已開機並完成螢幕初始化。
-- 確認主選單的「OTA更新」頁面顯示 AP 名稱 `TTGO-OTA-Setup`。
+- 確認主選單的「OTA更新」頁面顯示 AP 名稱 `esp32-TTGO-S3`。
 - 熱點為 2.4GHz，舊裝置請確認支援。
 - 若剛重新開機，請等待數秒再重新掃描。
 
 ### OTA 頁面打不開
 
-- 確認已連線 `TTGO-OTA-Setup`，網址為 `http://192.168.4.1`（不要使用 `https://`）。
+- 確認已連線 `esp32-TTGO-S3`，網址為 `http://192.168.4.1`（不要使用 `https://`）。
 - 手機若自動切換行動網路，請關閉行動數據或選擇「維持連線」。
-- 若畫面顯示「SPIFFS 未就緒」，請依「上傳 SPIFFS 頁面」章節重新打包並燒錄 `data/`。
+- 若畫面顯示「SPIFFS 未就緒」，請依「建立與燒錄 SPIFFS 映像」章節重新打包並燒錄 `data/`。
 
 ### 相片無法播放
 
@@ -509,6 +544,14 @@ loop()
 - 若顯示「無法解碼此圖片」，可能是檔案損毀或使用不支援的漸進式 JPEG。
 - 圖片過大時解碼會變慢；建議透過網頁上傳，瀏覽器會自動縮放為 320x170。
 - SPIFFS 空間不足時上傳會失敗，請先刪除不需要的相片。
+
+### SPIFFS 映像更新失敗
+
+- 確認 `spiffs.bin` 是以 `-s 0x9E0000` 產生，大小必須剛好 10,354,688 bytes。
+- 映像大小不符時裝置會直接拒絕，不會寫入任何資料。
+- 更新期間斷電可能導致分割區損毀，請重新以 USB 或再次上傳映像修復。
+- 更新失敗後裝置不會自動格式化，若分割區仍可掛載，既有相片與網頁會保留。
+- 若網頁顯示「SPIFFS 未就緒」，代表映像內沒有 `/index.html` 或大小不符。
 
 ### OTA 更新失敗
 
