@@ -324,6 +324,34 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .psize { display: block; margin-top: 2px; font-size: 10.5px; color: var(--muted); }
+  .photo .thumb { cursor: pointer; }
+  .photo .pick {
+    position: absolute; top: 7px; left: 7px;
+    width: 24px; height: 24px;
+    display: grid; place-items: center;
+    border-radius: 7px;
+    border: 1px solid rgba(148, 163, 184, .5);
+    background: rgba(7, 11, 20, .72);
+    color: transparent; font-size: 13px; line-height: 1;
+    cursor: pointer;
+  }
+  .photo .pick:hover { border-color: var(--accent); color: var(--accent); }
+  .photo.picked { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .photo.picked .pick {
+    background: var(--accent); border-color: var(--accent); color: #04121a;
+  }
+  .photo.picked .thumb { opacity: .7; }
+  .lib-actions {
+    margin-left: auto; display: flex; align-items: center;
+    gap: 8px; flex-wrap: wrap;
+  }
+  .lib-actions .ghost { margin-left: 0; }
+  .ghost.danger { color: var(--danger); border-color: rgba(248, 113, 113, .45); }
+  .ghost.danger:hover:not(:disabled) {
+    color: var(--danger); border-color: rgba(248, 113, 113, .8);
+    background: rgba(248, 113, 113, .1);
+  }
+  .sel-bar { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
 
   .tips ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.85; }
   .tips strong { color: var(--text); }
@@ -464,8 +492,13 @@
       <section class="card">
         <div class="card-head">
           <h2>相片庫 <span id="photoCount" class="pill">0 張</span></h2>
-          <button id="photoRefresh" class="ghost" type="button">重新整理</button>
+          <div class="lib-actions">
+            <button id="photoSelectAll" class="ghost" type="button" disabled>全選</button>
+            <button id="photoDeleteSel" class="ghost danger" type="button" disabled>刪除選取</button>
+            <button id="photoRefresh" class="ghost" type="button">重新整理</button>
+          </div>
         </div>
+        <p id="selBar" class="sel-bar">點選縮圖可多選，或使用「全選」。</p>
         <div id="photoGrid" class="photos"></div>
         <p id="photoEmpty" class="msg">尚無相片，請先上傳圖檔。</p>
         <p id="photoUsage" class="msg"></p>
@@ -478,6 +511,7 @@
           <li>每 6 秒自動切換下一張，短按 <code>P0</code> 可手動切換。</li>
           <li>長按 <code>P14</code> 返回選單，相片會持續保存在 SPIFFS。</li>
           <li>「相片資訊」可查看張數、容量與上傳網址。</li>
+          <li>相片庫可點選縮圖多選，再用「刪除選取」一次移除多張。</li>
         </ol>
       </section>
     </div>
@@ -689,6 +723,8 @@
   var queue = [];
   var busy = false;
   var photosLoading = false;
+  var selected = Object.create(null);
+  var photoList = [];
 
   function setPhotoMsg(text, kind) {
     var m = $("photoMsg");
@@ -918,15 +954,115 @@
     next();
   }
 
+  function selectedNames() {
+    return Object.keys(selected);
+  }
+
+  function isAllSelected() {
+    return photoList.length > 0 && photoList.every(function (n) { return selected[n]; });
+  }
+
+  function syncSelection() {
+    var n = selectedNames().length;
+    var total = photoList.length;
+
+    $("photoDeleteSel").disabled = n === 0 || busy || uploading;
+    $("photoDeleteSel").textContent = busy
+      ? "刪除中…"
+      : (n ? ("刪除選取 (" + n + ")") : "刪除選取");
+    $("photoSelectAll").disabled = total === 0 || busy || uploading;
+    $("photoSelectAll").textContent = isAllSelected() ? "取消全選" : "全選";
+
+    $("selBar").textContent = n
+      ? ("已選 " + n + " / " + total + " 張，按「刪除選取」一次移除。")
+      : "點選縮圖可多選，或使用「全選」。";
+
+    var figs = document.querySelectorAll("#photoGrid .photo");
+    for (var i = 0; i < figs.length; i++) {
+      figs[i].classList.toggle("picked", !!selected[figs[i].dataset.name]);
+    }
+  }
+
+  function toggleSelect(name) {
+    if (busy || uploading) return;
+    if (selected[name]) delete selected[name];
+    else selected[name] = true;
+    syncSelection();
+  }
+
+  function deleteSelected() {
+    if (busy || uploading) return;
+    var names = selectedNames();
+    if (names.length === 0) return;
+    if (!confirm("確定刪除選取的 " + names.length + " 張相片？此動作無法復原。")) return;
+
+    busy = true;
+    var total = names.length;
+    var done = 0;
+    var failed = 0;
+    $("photoRefresh").disabled = true;
+    syncSelection();
+    setPhotoMsg("正在刪除 1/" + total + " 張…", "");
+
+    function finish() {
+      busy = false;
+      $("photoRefresh").disabled = false;
+      if (failed) {
+        setPhotoMsg("已刪除 " + done + " 張，另有 " + failed + " 張刪除失敗。", "err");
+      } else {
+        setPhotoMsg("已刪除 " + done + " 張相片。", "ok");
+      }
+      loadPhotos();
+      refresh().catch(function () {});
+    }
+
+    function step() {
+      if (names.length === 0) { finish(); return; }
+      var name = names.shift();
+      setPhotoMsg("正在刪除 " + (done + failed + 1) + "/" + total + " 張…", "");
+      fetch("/api/photos/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body: "name=" + encodeURIComponent(name)
+      })
+        .then(function (r) {
+          return r.json().catch(function () { return {}; }).then(function (j) {
+            if (!r.ok || !j.ok) throw new Error(j.message || "刪除失敗");
+          });
+        })
+        .then(function () { done++; })
+        .catch(function () { failed++; })
+        .then(function () {
+          delete selected[name];
+          syncSelection();
+          step();
+        });
+    }
+
+    step();
+  }
+
   function photoCard(f) {
     var fig = document.createElement("figure");
-    fig.className = "photo";
+    fig.className = "photo" + (selected[f.name] ? " picked" : "");
+    fig.dataset.name = f.name;
+
+    var pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "pick";
+    pick.title = "選取／取消選取";
+    pick.textContent = "✓";
+    pick.addEventListener("click", function (e) {
+      e.stopPropagation();
+      toggleSelect(f.name);
+    });
 
     var img = document.createElement("img");
     img.className = "thumb";
     img.loading = "lazy";
     img.alt = f.name;
     img.src = "/photos/" + encodeURIComponent(f.name);
+    img.addEventListener("click", function () { toggleSelect(f.name); });
 
     var del = document.createElement("button");
     del.type = "button";
@@ -947,6 +1083,8 @@
           });
         })
         .then(function () {
+          delete selected[f.name];
+          syncSelection();
           setPhotoMsg("已刪除相片。", "ok");
           loadPhotos();
           refresh().catch(function () {});
@@ -967,6 +1105,7 @@
     cap.appendChild(name);
     cap.appendChild(size);
 
+    fig.appendChild(pick);
     fig.appendChild(img);
     fig.appendChild(del);
     fig.appendChild(cap);
@@ -984,9 +1123,15 @@
         $("photoCount").textContent = d.count + " 張";
         $("st-photos").textContent = d.count + " 張";
 
+        photoList = d.files.map(function (f) { return f.name; });
+        Object.keys(selected).forEach(function (n) {
+          if (photoList.indexOf(n) === -1) delete selected[n];
+        });
+
         var grid = $("photoGrid");
         grid.innerHTML = "";
         d.files.forEach(function (f) { grid.appendChild(photoCard(f)); });
+        syncSelection();
 
         $("photoEmpty").textContent = "尚無相片，請先上傳圖檔。";
         $("photoEmpty").classList.toggle("hidden", d.count > 0);
@@ -1000,6 +1145,7 @@
       .catch(function () {
         $("photoEmpty").classList.remove("hidden");
         $("photoEmpty").textContent = "無法取得相片清單，請確認裝置連線。";
+        syncSelection();
       })
       .then(function () { photosLoading = false; });
   }
@@ -1036,6 +1182,16 @@
     photoInput.value = "";
   });
   $("photoUpload").addEventListener("click", uploadQueue);
+  $("photoDeleteSel").addEventListener("click", deleteSelected);
+  $("photoSelectAll").addEventListener("click", function () {
+    if (busy || uploading) return;
+    var all = isAllSelected();
+    selected = Object.create(null);
+    if (!all) {
+      photoList.forEach(function (n) { selected[n] = true; });
+    }
+    syncSelection();
+  });
   $("photoRefresh").addEventListener("click", function () {
     setPhotoMsg("正在重新整理相片清單…", "");
     loadPhotos().then(function (d) {
